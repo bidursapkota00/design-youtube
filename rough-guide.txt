@@ -1,0 +1,781 @@
+• navi@Navi-Desktop:/mnt/c/Users/singh/youtube-clone$ cd video-processi "
+ng-service/
+navi@Navi-Desktop:/mnt/c/Users/singh/youtube-clone/video-processing-s
+•ervice$ npm init -y
+
+package.json
+"name": "video-processing-service",
+"version": "1.0.0"
+"description":.""
+"main": "index. js",
+D Debug
+"scripts": {
+"test": "echo | "Error: no test specified\" && exit 1"
+},
+"author": ""
+"license": "ISC"
+navi@Navi-Desktop:/mnt/c/Users/singh/youtube-clone/video-processing-s
+ervices npm install express
+
+navi@Navi-Desktop:/mnt/c/Users/singh/youtube-clone/video-processing-s
+• ervice$ npm install --save-dev typescript ts-node
+
+navi@Navi-Desktop:/mnt/c/Users/singh/youtube-clone/video-processing-s
+• ervices npm i --save-dev @type/node @types/express_
+
+.gitignore
+node_modules
+
+• navi@Navi-Desktop:/mnt/c/Users/singh/youtube-clone/video-processing-service$ touch tsc
+onfig.json
+
++ C typescriptlang.org/docs/handbook/tsconfig-json.html
+
+{
+  "compilerOptions": {
+    "target": "ES6",
+    "module": "CommonJS",
+    "rootDir": "src",
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+
+{
+  "name": "video-processing-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "serve": "node dist/index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.15.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
+
+import express from "'express";
+const app = express () ;
+const port = 3000;
+app. get("/", (req, res) => {
+res. send ("Hello World!");
+}) ;
+app. listen (port, () = {
+console.log(
+Video processing service listening at http://localhost:${port}');
+}) ;
+
+---
+---
+---
+
+> npm i fluent-ffmpeg
+• navi@Navi-Desktop:/mnt/c/Users/singh/youtube-clone/video-processing-service$ npm i - -s
+ave-dev @types/fluent-ffmpegl
+
+import express from. "express";
+loport ffmpeg from. "fluent-ffmpeg";
+• navi@Navi-Desktop:/mnt/c/Users/singh/youtube-clone/video-processing-service$ \
+> sudo apt-get update && sudo apt-get install -y ffmpeg
+
+const port = process. env. PORT || 3000
+app. post("/process-video", (req, res) => {
+// Get path of the input video file from the request body
+const inputFilePath = req.body.inputFilePath;
+const outputFilePath = req.body.outputFilePath;
+if (!inputFilePath || !outputFilePath) {
+res. status (400). send ("Bad Request: Missing file path.");
+ffmpeg (inputFilePath)
+• outputOptions("-vf", "scale=-1: 360") // 360р
+• on ("error", (err) => {
+console. log( An error occurred: $(err.message)i) ;
+}) ;
+
+• on("end") callback
+ffmpeg (inputFilePath)
+• outputOptions("- vf"
+"scale=-1:360") // 360р
+res. status (200). send "Processing finished successfully. ")
+• on ("error", (err) => {
+console. log ( An error occurred: $(err.message} );
+res. status (500). send( Internal Server Error: $(err.message}) ;
+• save (outputFilePath);
+});
+app. listen port,
+console.log(
+"Video processing service listening at http://localhost:${port}');
+}) ;
+
+const app = express();
+app. use(express. json());
+app. post("/process-video", (req, res) => {
+// Get path of the input video file from the request body
+const inputFilePath = req.body.inputFilePath;
+const outputFilePath = req.body.outputFilePath;
+if (!inputFilePath || !outputFilePath) {
+res. status (400). send ("Bad Request: Missing file path.");
+ffmpeg(inputFilePath)
+• outputoptions"-vf", "scale=-1:360") I/ 360p
+res. status(200). send( "Processing finished successfullv.")
+
+TC New Request X
+POST
+http://localhost:3000/process-video
+{
+"inputFilePath": "./nc-intro.mov",
+"outputFilePath": "./processed-nc-intro.mov"
+}
+...
+Status: 200 OK
+
+---
+---
+---
+
+FROM node: 18
+WORKDIR /app
+COPY package*.json •/
+RUN apt-get update && apt-get install -y ffmpeg
+COPY package*. json •/
+RUN apt-get update && apt-get install -y ffmpeg
+RUN npm install
+COPY . .
+EXPOSE
+3000
+CMD • [: "npm", "start"
+
+.dockerignore
+node_modules
+
+FROM node: 18
+AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+FROM node: 18
+WORKDIR /app
+COPY package* json ./
+RUN apt-get update && apt-get install -y ffmpeg
+RUN npm install --only=production
+COPY - -from=builder /app/dist ./dist
+EXPOSE 3000
+CMD • [: "node", "dist/index.js"]
+
+docker images
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker build -t video-proc
+essing-service •
+
+docker images
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker run -p 3000:3000 -d
+video-processing-service_
+
+docker ps
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker cp ./nc-intro.mov b
+eautiful_jang:/app/nc-intro.mov
+
+TC localhost:3000/process-video
+"inputFilePath": "./nc-intro.mov",
+"outputFilePath": "./processed-nc-intro.mov"
+Status: 200 OK Size: 33 Bytes Time: 386 ms
+Processing finished successfully.
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker cp beautiful_jang:/
+app/process-nc-intro.mov ./
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker ps
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker stop ale1b1b6d438
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker ps
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker ps -a
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker rm ale1b1b6d438
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker ps -a
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker images
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker image rm ble1b1b6d438
+
+
+---
+---
+---
+
+
+o navi@Navi-Desktop:~/youtube-clone/video-processing-service$ npm
+install @google-cloud/storage
+
+storage.ts>...
+import { Storage
+from "@google-cloud/storage';
+import fs from
+'fs'
+import ffmpeg from
+"fluent-ffmpeg';
+const
+storage = new Storage);
+const rawVideoBucketName = "nc-yt-raw-videos";
+const processedVideoBucketName = "nc-yt-processed-videos";
+const localRawVideoPath = "./raw-videos";
+const localProcessedVideoPath = "./processed-videos";
+/**
+Creates the local directories for raw and processed videos.
+* /
+export function setupDirectories) {
+/**
+@param rawVideoName - The name of the file to convert from {@link localRawVideoPath}.
+@param processedVideoName - The name of the file to convert to {@link localProcessedVideoPath}
+@returns A promise that resolves when the video has been converted.
+export function convertVideo(rawVideoName: string, processedVideoName: string) {
+
+export function convertVideo(rawVideoName: string, processedVideoName: string) E
+return new Promise‹void›( (resolve, reject) => {
+ffmpeg('${localRawVideoPath}/$(rawVideoName})
+• outputOptions(" -vf", "scale=-1: 360") // 360p
+console. log("Processing finished successfully.");
+resolve();
+})
+console. log ( An error occurred: $(err. message} ");
+reject (err);
+})
+}) ;
+• save $(localProcessedVideoPath}/$(processedVideoName}) ;
+
+@param fileName - The name of the file to download from the
+{@link rawVideoBucketName} bucket into the (@link localRawVideoPath} folder.
+@returns A promise that resolves when the file has been downloaded.
+* /
+export async function downloadRawVideo(fileName: string)
+/**
+*
+@param fileName - The name of the file to upload from the
+{@link localProcessedVideoPath} folder into the {@link processedVideoBucketName}.
+@returns A promise that resolves when the file has been uploaded.
+* /
+export async function uploadProcessedVideo(fileName: string)(
+
+export async function downloadRawVideo(fileName: string) E
+await storage. bucket (rawVideoBucketName)
+•file (fileName)
+• download({ destination: "${localRawVideoPath}/${fileName}* });
+console.log(
+gs://$(rawVideoBucketName}/${fileName} downloaded to $(localRawVideoPath}/${fileName}
+
+export async function uploadProcessedVideo(fileName: string) f
+const bucket = storage.bucket(processedVideoBucketName) ;
+await bucket.upload( $(1ocalProcessedVideoPath}/$(fileName} , {
+destination: fileName
+}) ;
+console.log(
+) ;
+*(localProcessedVideoPath}/${fileName} uploaded to gs://${processedVideoBucketName}/${fileNam
+await bucket.file(fileName) . makePublic();
+
+/**
+@param filePath - The path of the file to delete.
+*
+@returns A promise that resolves when the file has been deleted.
+* /
+function deleteFile(filePath: string): Promise‹void> {
+return new
+Promise (resolve, reject) => {
+if (fs. existsSync(filePath)) {
+fs. unlink(filePath, (err) => {
+if (err) {
+console. log Failed to delete file at $(filePath}, err);
+reject (err);
+} else E
+console.log( File deleted at ${filePath});|
+resolve ();
+})
+else {
+resolve ();
+console. log( File not found at ${filePath), skipping the delete.');
+
+export function deleteRawVideo(fileName: string) d
+•return deleteFile( ${1ocalRawVideoPath}/${fileName} ) ;
+
+export: function deleteProcessedVideo(fileName: string) E
+return deleteFile('$(localProcessedVideoPath}/${fileName));
+
+function ensureDirectoryExistence(dirPath: string) {
+if (!fs.existsSync(dirPath)) {
+fs.mkdirSync (dirPath, { recursive: true }); // recursive: true enables creating nested directo
+console. log("Directory created at $(dirPath}");
+
+export function setupDirectories) {
+ensureDirectoryExistence(localRawVideoPath);
+ensureDirectoryExistence (LocalProcessedVideoPath);
+
+TS index.ts
+import setupDirectories from ./storage";
+setupDirectories ();|
+
+app. post ("/process-video", async (req, res) => {
+//•Get the bucket and filename from the Cloud Pub/Sub• message
+let data;
+try l
+const message = Buffer. from(req. body. message data, 'base64'). toString(' utf8');
+•data = JSON. parse (message);
+throw new Error 'Invalid message payload received. ');
+• catch (error) • {
+console.error (error);
+• return res. status (400). send('Bad Request: missing filename. ');
+
++ Ce cloud.google.com/run/docs/tutorials/pubsub#run_pubsub_server-nodejs
+app post ('/', (req, res) => {
+if (reg. body)
+const msg = 'no Pub/Sub message received';
+console. error'error: $(msg)');
+res. status(400). send (Bad Request: $(msg) "):
+return;
+if (!req. body.message) {
+const msg = 'invalid Pub/Sub message format';
+console. error error: $(msg));
+res. status(400). send (Bad Request: $ (msg) "):
+return;
+const pubSubMessage = req.body.message;
+const name = pubSubMessage.data
+? Buffer. from(pubSubMessage.data, "base64'). toString() .trim()
+: 'World';
+console. log( Hello ${name)! ');
+res. status (204). send);
+)) ;
+
+const inputFileName = data.name;
+const outputFileName = processed-${inputFileName};
+// Download the raw video from Cloud Storage
+await downloadRawVideo(inputFileName);
+// Convert the video to 360p
+try {
+await convertVideo (inputFileName, outputFileName);
+}
+catch (err)
+console. error (err);
+return res. status (500) . send ('Internal Server Error: video processing failed. ');
+// Upload the processed video to Cloud Storage
+await uploadProcessedVideo(outputFileName) ;
+}) ;
+
+await convertVideo (inputFileName, outputFileName);
+catch (err) {
+await Promise. all(l
+You, 12 seconds ago • Uncommitted changes
+deleteRawVideo (inputFileName),
+deleteProcessedVideo(outputFileName)
+console. error (err);
+return res. status (500). send (Internal Server Error: video processing failed.');
+// Upload the processed video to Cloud Storage
+await uploadProcessedVideo(outputFileName) ;
+}) ;
+
+await uploadProcessedVideo (outputFileName);
+await Promise. all[
+deleteRawVideo (inputFileName),
+deleteProcessedVideo(outputFileName)
+1);
+return res. status (200). send Processing finished successfull|;
+
+create new project in gcloud and grab project id yt-clone-3dce6
+
+install gcloud cli
+
+gcloud -v
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gcloud auth login
+o navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gcloud services enable art
+ifactregistry.googleapis.com
+or through ui by searching artifact registry api and enabling it
+
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gcloud config set project
+yt-clone-3dce6
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ giloud config get-value pr
+oject
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gcloud services enable art
+ifactregistry.googleapis.com
+
+o navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gcloud components update
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gcloud artifacts repositor
+ies create video-processing-repo \
+› --repository-format=docker \
+› --location=us-central1 \
+› --description="Docker repo for video processing service"l
+
+or in ui Artifact Registry
++
+Repositories
+• Google-managed encryption key
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker build -t us-central
+1-docker.pkg.dev/yt-clone-3dce6/video-processing-repo/video-processing-service •
+
+o navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gcloud auth configure-dock
+er us-central1-docker.pkg .dev
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker images
+
+o navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker push us-central1-do
+cker. pkg. dev/yt-clone-3dce6/video-processing-repo/video-processing-service_
+
+in ui search arti
+(8)
+Repositories
+• video-processing-service
+
+search Cloud Run
+enable if not enabled! from ui or
+• navi@Navi-Desktop:~/youtube-clone$ gcloud services enable run. googleapis.com
++ CREATE SERVICE
+video-processing-service
+Ingress control
+• Internal
+Authentication * ?
+• Allow unauthenticated invocations
+
+Deploy one revision from an existing container image
+Container image URL
+SELECT
+video-processing-service
+5366048890 latest
+
+URL: https://video-processing-service-v6j6pvk7fq-uc.a.run.app
+
+Q pubsub
+Q Search
+Pub/Sub
+Global real-title messaging
+
+* CREATE TOPIC
+video-uploads-topic
+
+CREATE SUBSCRIRTION
+video-uploads-subscription
+Delivery type @
+Push
+https://video-processing-service-v6j6pvk7fg-uc.a.run.app/process-video
+
+cloud storage
+Buckets
++ CREATE
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gsutil mb -1 u
+s-central1 --pap=enforced gs://nc-yt-raw-videos
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gsutil notific
+ation create -t video-uploads-topic -f json OBJECT_FINALIZE gs://nc-yt-raw
+- videos
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ gsutil mb -1 u
+s-centrall gs://nc-yt-processed-videos
+
+Cloud Run
+video-processing-service
+LOGS
+node dist/index.js
+
+cloud storage
+Buckets > nc-yt-raw-videos O
+UPLOAD FILES
+
+pubsu
+:%: video-uploads-subscription
+projects/yt-clone-3dce6/topics/video-uploads-topic
+METRICS
+
+---
+---
+---
+
+yt-web-client > app > navbar >
+layout.tsx M
+page.tsx u
+navbar.tsx U X
+navbar.module.css U
+navbar.tsx ›
+import Image from "next/image";
+import Link from "next/link";
+import styles from "
+•/navbar.module.css";
+export default function Navbar() E
+return
+(
+‹nav className=(styles.nav}>
+‹Link href="/">
+< Image width=(90} height=(20}
+src="/youtube-logo.svg" alt="YouTube Logo"/>
+</Link>
+</nav>
+);
+
+• nav {
+display: flex;
+justify-content: space-between;
+align-items: center;
+padding: 1em;
+
+Ș npm install firebase
+Then, initialize Firebase and begin using the SDKs for the products you'd like to use.
+
+firebase.ts
+/ Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+// Your web app's Firebase configuration
+const firebaseConfig = {
+apikey: "",
+authDomain: "",
+projectId: "",
+storageBucket: "",
+messagingSenderId: "",
+appId: ""
+} ;
+// Initialize Firebase
+const app = initializeApp(firebaseConfig) ;
+
+firebase.ts
+import f
+getAuth,
+signInwithPopup,
+GoogleAuthProvider,
+PoonAuthStateChanged,
+User
+from "firebase/auth";
+
+Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth (app) ;
+/**
+*
+*• Signs the user in with a Google popup.
+*•@returns A promise that resolves with the user's credentials.
+export function signInWithGoogle() {|
+return signInwithPopup (auth, new GoogleAuthProvider ()) ;
+
+export function signout() {
+return auth. signOut() ;
+}
+export function onAuthStateChangedHelper(callback: (user: User | null) => void) {
+return onAuthStateChanged (auth, callback);
+
+Sign-in providers
+G Google
+Enable
+project-437029731285
+support@gmail.com
+
+sign-in.module.css
+• signin {
+display: inline-block;
+border: 1px solid
+•gray;
+color:
+• #065fd4;
+padding: 10px 20px;
+border-radius: 24px;
+font-family: "Roboto", "Arial", sans-serif;
+font-size: 14px;
+font-weight: 500;
+cursor: pointer;
+• signin hover {
+background-color:
+border: 1px• solid transparent;
+
+import { Fragment
+} from "react";
+import { signInwithGoogle, signOut } from "../firebase/firebase";
+import styles from
+'./sign-in.module.css';
+export default function SignIn() {
+return (
+‹Fragment>
+Sign Out
+</ button>
+Sign In
+</button >
+</Fragment>
+‹button className=(styles.signin} onClick={signOut}>
+‹button className=(styles.signin} onClick=(signInWithGoogle)>
+
+import
+SignIn
+from
+"./sign-in";
+add comp below too
+e
+xport default function Navbar() {
+/ Init user state
+const [user, setUser] = useState‹User | null>(null);
+usEffect () => {
+const unsubscribe = onAuthStateChangedHelper (user) => {
+setUser (user);
+}) ;
+return () = unsubscribe();
+
+navbar
+‹SignIn user=(user} />
+
+< Fragment>
+user ?
+‹button className= (styles. signin) onClick=(signout}>
+Sign Out
+</button>
+) : (
+• Sign In
+</ button>
+‹button className=(styles. signin) onClick=(signInwithGoogle}>
+
+Firestore Database
+Cloud Firestore
+Create database
+
+Firebase Functions
+npm install -g firebase-tools
+
+• navi@Navi-Desktop:~/youtube-clone$ firebase login
+
+video-processing-service
+yt-api-service
+yt-web-client
+• navi@Navi-Desktop:~/youtube-clone$ cd yt-api-service/
+
+• navi@Navi-Desktop:~/youtube-clone/yt-api-service$ firebase init functions
+
+• navi@Navi-Desktop:~/youtube-clone/yt-api-service$ cd functions/
+• navi@Navi-Desktop:~/youtube-clone/yt-api-service/functions$ npm install fi
+rebase-functions@latest firebase-admin@latest
+
+• navi@Navi-Desktop:~/youtube-clone/yt-api-service/functions$ npm run serve
+
+127.0.0.1:5001/yt-clonp-3dce6/us-central1/helloWorld
+Hello from Firebase!
+
+localhost:4000/logs?q=metadata.emulator.name%3D"functions*
+Firebase Emulator Suite
+Logs
+functions http function initialized (http://127.0.0.1:5001/yt-clone-3dce6/us-central1/hellolorld).
+
+import * as functions from "firebase-functions";
+import { initializeApp} from "firebase-admin/app";
+import
+{ Firestore } from "firebase-admin/firestore";
+import * as logger from "firebase-functions/logger"
+initializeApp();
+const
+firestore
+= new Firestore();
+export const createUser = functions.auth.user(). onCreate( (user) => {
+const userInfo = {
+uid: user.uid,
+email: user. email,
+photoUrl: user• photoURL
+};
+firestore. collection("users"). doc (user.uid). set (userInfo);
+logger. info User Created: $(JSON. stringify(userInfo)} );
+return;
+}) ;
+
+• navi@Navi-Desktop:~/youtube-clone/yt-api-service/functions$ npm run deploy
+
+(..) Functions
+Dashboard
+createUser
+1st gen
+
+Google Cloud
+• Create a PUT-signed UAL using 
+Cloud Storage docs
+
+navi@Navi-Desktop:~/youtube-clone/yt-api-service/funct
+• ions$ npm i @google-cloud/storage
+
+laport {Storage} from "@google-cloud/storage";
+import onCall from "firebase-functions/x2/https"
+initializeApp();
+const firestore = new Firestore();
+const storage = new Storage ();
+const rawVideoBucketName = "nc-yt-raw-videos";
+export const createUser = functions.auth.user). onCreate( (user) => {
+const userInfo = {
+uid: user.uid,
+email: user. email,
+photoUrl: user. photoURL,
+
+export const generateUploadUrl = onCall({maxInstances: 1), async (request) =>
+/ Check if the user is authenticated
+if (!request.auth) {
+throw new functions.https.HttpsError(
+"failed-precondition",
+"The function must be called while authenticated."
+const
+auth = request. auth;
+const
+data = request. data;
+const
+bucket = storage. bucket (rawVideoBucketName);|
+const fileName = $(auth.uid}-${Date.now()}.${data.fileExtension};
+// Get a v4 signed URL for uploading file
+const [url] = await bucket.file(fileName) • getSignedUr1({
+version: "v4"
+action: "write",
+expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+5) ;
+return {url, fileName};
+
+o navi@Navi-Desktop:~/youtube-clone/yt-api-service/functions$ firebase deplo
+y --only functions:generateUploadUrl
+
+= Google Cloud
+(..) Cloud Functions
+Function details
+• generateUploadUrl
+2nd gen
+DETAILS
+service account: 437029731285-compute@developer.gserviceaccount.com
+
+Bucket details
+Permissions
++2 GRANT ACCESS
+Type
+Principal 1
+437029731285-compute@developer.gservi
+437029731285@cloudbuild.gserviceaccou
+Owners of project: yt-clone-3dce6
+Add principals
+service-
+437029731285@containerregistry.iam.gsel
+Grant access to "no-yt-raw-videos"
+Principals are users, groups, domains, or service accounts. Learn more about principals
+in lAM C
+> Cloud Storage
+> Storage Object Admin
+
+iam & admi
+Princinal 
+437029731285-
+compute@developer.gserviceaccount
+Edit access to "yt-clone"
+Principal ®
+437029731285-compute@developer.gserviceaccount.com
+Project
+yt-clone
+Service Account Token Creator
+
+PS C: \Users\dell\Desktop\codeyalaya\youtube-api-functions\functions> gcloud functions describe generateUploadUrl --region=us-centr
+• al1
