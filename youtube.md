@@ -19,6 +19,8 @@
 13. [Firestore — Video Metadata](#firestore--video-metadata)
 14. [Video Listing & Playback](#video-listing--playback)
 15. [Deploying the Web Client](#deploying-the-web-client)
+16. [Adaptive Streaming — HLS with M3U8](#adaptive-streaming--hls-with-m3u8)
+17. [Content Delivery Network (CDN)](#content-delivery-network-cdn)
 
 ---
 
@@ -1645,3 +1647,1027 @@ After deployment, you get a service URL (e.g., `https://yt-web-client-v6j6pvk7fq
 2. Add the Cloud Run service URL (e.g., `yt-web-client-v6j6pvk7fq-uc.a.run.app`)
 
 This allows Firebase Authentication to work from the deployed domain. Without this, Google sign-in will fail with an unauthorized domain error.
+
+---
+
+## Adaptive Streaming — HLS with M3U8
+
+The previous sections serve a single 360p MP4 file per video. Real streaming platforms use **HTTP Live Streaming (HLS)** to deliver multiple quality levels and let the player switch automatically based on network conditions. This section replaces the single-file approach with a full adaptive bitrate pipeline: the processing service transcodes each upload into 360p, 480p, and 720p HLS streams, generates a master M3U8 playlist, uploads everything to Cloud Storage, and the web client uses HLS.js to play it with quality switching.
+
+### How HLS Works
+
+HLS splits a video into small `.ts` (Transport Stream) segments — typically 6–10 seconds each. A **variant playlist** (`.m3u8`) for each quality level lists its segments. A **master playlist** references all variant playlists and declares their resolution/bandwidth so the player can choose the right one.
+
+```text
+master.m3u8
+├── 360p/playlist.m3u8  → 360p/segment000.ts, 360p/segment001.ts, ...
+├── 480p/playlist.m3u8  → 480p/segment000.ts, 480p/segment001.ts, ...
+└── 720p/playlist.m3u8  → 720p/segment000.ts, 720p/segment001.ts, ...
+```
+
+The player starts with the quality that matches current bandwidth. If the network degrades mid-stream, it drops to a lower variant without rebuffering. If bandwidth improves, it steps up seamlessly.
+
+### Update `src/storage.ts` — Multi-Resolution HLS Transcoding
+
+Replace the `convertVideo` function (or add alongside it) and add helpers for HLS output:
+
+```typescript
+import { Storage } from "@google-cloud/storage";
+import fs from "fs";
+import path from "path";
+import ffmpeg from "fluent-ffmpeg";
+
+const storage = new Storage();
+
+const rawVideoBucketName = "codeyalaya-yt-raw-videos";
+const processedVideoBucketName = "codeyalaya-yt-processed-videos";
+
+const localRawVideoPath = "./raw-videos";
+const localProcessedVideoPath = "./processed-videos";
+
+/**
+ * Creates the local directories for raw and processed videos.
+ */
+export function setupDirectories() {
+  ensureDirectoryExistence(localRawVideoPath);
+  ensureDirectoryExistence(localProcessedVideoPath);
+}
+
+// --- HLS Adaptive Streaming ---
+
+interface HlsVariant {
+  name: string; // e.g. "360p"
+  height: number; // e.g. 360
+  videoBitrate: string; // e.g. "800k"
+  audioBitrate: string; // e.g. "96k"
+  maxrate: string; // e.g. "856k"
+  bufsize: string; // e.g. "1200k"
+  bandwidth: number; // bits/sec for master playlist, e.g. 800000
+}
+
+const HLS_VARIANTS: HlsVariant[] = [
+  {
+    name: "360p",
+    height: 360,
+    videoBitrate: "800k",
+    audioBitrate: "96k",
+    maxrate: "856k",
+    bufsize: "1200k",
+    bandwidth: 800000,
+  },
+  {
+    name: "480p",
+    height: 480,
+    videoBitrate: "1400k",
+    audioBitrate: "128k",
+    maxrate: "1498k",
+    bufsize: "2100k",
+    bandwidth: 1400000,
+  },
+  {
+    name: "720p",
+    height: 720,
+    videoBitrate: "2800k",
+    audioBitrate: "128k",
+    maxrate: "2996k",
+    bufsize: "4200k",
+    bandwidth: 2800000,
+  },
+];
+
+/**
+ * Transcodes a single HLS variant (e.g. 360p) from the raw video.
+ * Produces a directory like ./processed-videos/<videoId>/360p/
+ * containing playlist.m3u8 and segment*.ts files.
+ */
+function transcodeVariant(
+  rawVideoPath: string,
+  outputDir: string,
+  variant: HlsVariant,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const variantDir = path.join(outputDir, variant.name);
+    ensureDirectoryExistence(variantDir);
+
+    const playlistPath = path.join(variantDir, "playlist.m3u8");
+    const segmentPattern = path.join(variantDir, "segment%03d.ts");
+
+    ffmpeg(rawVideoPath)
+      .outputOptions([
+        "-vf",
+        `scale=-2:${variant.height}`,
+        "-c:v",
+        "libx264",
+        "-b:v",
+        variant.videoBitrate,
+        "-maxrate",
+        variant.maxrate,
+        "-bufsize",
+        variant.bufsize,
+        "-c:a",
+        "aac",
+        "-b:a",
+        variant.audioBitrate,
+        "-ar",
+        "48000",
+        "-hls_time",
+        "6",
+        "-hls_playlist_type",
+        "vod",
+        "-hls_segment_filename",
+        segmentPattern,
+        "-f",
+        "hls",
+      ])
+      .on("end", () => {
+        console.log(`Transcoding ${variant.name} finished.`);
+        resolve();
+      })
+      .on("error", (err) => {
+        console.error(`Transcoding ${variant.name} failed: ${err.message}`);
+        reject(err);
+      })
+      .save(playlistPath);
+  });
+}
+
+/**
+ * Generates the master M3U8 playlist that references all variant playlists.
+ */
+function generateMasterPlaylist(outputDir: string): void {
+  let content = "#EXTM3U\n#EXT-X-VERSION:3\n\n";
+
+  for (const variant of HLS_VARIANTS) {
+    // Calculate width from height assuming 16:9 aspect ratio
+    const width = Math.round((variant.height * 16) / 9);
+    // Ensure width is even (required by x264)
+    const evenWidth = width % 2 === 0 ? width : width + 1;
+
+    content += `#EXT-X-STREAM-INF:BANDWIDTH=${variant.bandwidth},RESOLUTION=${evenWidth}x${variant.height}\n`;
+    content += `${variant.name}/playlist.m3u8\n\n`;
+  }
+
+  fs.writeFileSync(path.join(outputDir, "master.m3u8"), content);
+  console.log("Master playlist generated.");
+}
+
+/**
+ * Full adaptive streaming pipeline:
+ * 1. Transcode raw video into 360p, 480p, and 720p HLS variants (sequentially to limit resource usage).
+ * 2. Generate a master.m3u8 playlist.
+ * Returns the path to the output directory.
+ *
+ * @param rawVideoName - Filename inside ./raw-videos/
+ * @param videoId - Unique identifier used as the output folder name.
+ */
+export async function convertVideoToHls(
+  rawVideoName: string,
+  videoId: string,
+): Promise<string> {
+  const rawVideoPath = `${localRawVideoPath}/${rawVideoName}`;
+  const outputDir = path.join(localProcessedVideoPath, videoId);
+  ensureDirectoryExistence(outputDir);
+
+  // Transcode each variant sequentially to avoid overwhelming the CPU
+  for (const variant of HLS_VARIANTS) {
+    await transcodeVariant(rawVideoPath, outputDir, variant);
+  }
+
+  generateMasterPlaylist(outputDir);
+  return outputDir;
+}
+
+/**
+ * Uploads the entire HLS output directory to Cloud Storage.
+ * Preserves the folder structure:
+ *   <videoId>/master.m3u8
+ *   <videoId>/360p/playlist.m3u8
+ *   <videoId>/360p/segment000.ts
+ *   ...
+ *
+ * Sets correct Content-Type headers so browsers can fetch segments directly.
+ */
+export async function uploadHlsOutput(
+  localDir: string,
+  videoId: string,
+): Promise<void> {
+  const bucket = storage.bucket(processedVideoBucketName);
+
+  async function uploadRecursive(dir: string) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        await uploadRecursive(fullPath);
+      } else {
+        // Compute the destination path relative to localProcessedVideoPath
+        const destination = path.relative(localProcessedVideoPath, fullPath);
+
+        // Determine Content-Type
+        let contentType = "application/octet-stream";
+        if (entry.name.endsWith(".m3u8")) {
+          contentType = "application/vnd.apple.mpegurl";
+        } else if (entry.name.endsWith(".ts")) {
+          contentType = "video/mp2t";
+        }
+
+        await bucket.upload(fullPath, {
+          destination,
+          metadata: { contentType },
+        });
+      }
+    }
+  }
+
+  await uploadRecursive(localDir);
+
+  // Make all uploaded files public
+  const [files] = await bucket.getFiles({ prefix: `${videoId}/` });
+  await Promise.all(files.map((file) => file.makePublic()));
+
+  console.log(`HLS output for ${videoId} uploaded and made public.`);
+}
+
+/**
+ * Deletes the entire local HLS output directory for a video.
+ */
+export function deleteHlsOutput(videoId: string): Promise<void> {
+  const dir = path.join(localProcessedVideoPath, videoId);
+  return new Promise((resolve) => {
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(`Deleted HLS output at ${dir}`);
+    }
+    resolve();
+  });
+}
+
+// --- Original helpers (unchanged) ---
+
+/**
+ * @param fileName - The name of the file to download from the
+ * {@link rawVideoBucketName} bucket into the {@link localRawVideoPath} folder.
+ * @returns A promise that resolves when the file has been downloaded.
+ */
+export async function downloadRawVideo(fileName: string) {
+  await storage
+    .bucket(rawVideoBucketName)
+    .file(fileName)
+    .download({ destination: `${localRawVideoPath}/${fileName}` });
+
+  console.log(
+    `gs://${rawVideoBucketName}/${fileName} downloaded to ${localRawVideoPath}/${fileName}.`,
+  );
+}
+
+/**
+ * @param fileName - The name of the file to delete from the
+ * {@link localRawVideoPath} folder.
+ * @returns A promise that resolves when the file has been deleted.
+ */
+export function deleteRawVideo(fileName: string) {
+  return deleteFile(`${localRawVideoPath}/${fileName}`);
+}
+
+/**
+ * @param filePath - The path of the file to delete.
+ * @returns A promise that resolves when the file has been deleted.
+ */
+function deleteFile(filePath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (fs.existsSync(filePath)) {
+      fs.unlink(filePath, (err) => {
+        if (err) {
+          console.log(`Failed to delete file at ${filePath}`, err);
+          reject(err);
+        } else {
+          console.log(`File deleted at ${filePath}`);
+          resolve();
+        }
+      });
+    } else {
+      console.log(`File not found at ${filePath}, skipping the delete.`);
+      resolve();
+    }
+  });
+}
+
+/**
+ * Ensures a directory exists, creating it if necessary.
+ * @param {string} dirPath - The directory path to check.
+ */
+function ensureDirectoryExistence(dirPath: string) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+    console.log(`Directory created at ${dirPath}`);
+  }
+}
+```
+
+**Key changes from the single-file version:**
+
+- `HLS_VARIANTS` defines the three quality levels with their encoding parameters. `videoBitrate` controls file size, `maxrate`/`bufsize` enforce CBR-like behavior for smoother streaming, and `bandwidth` is written into the master playlist so the player knows how much throughput each variant needs.
+- `transcodeVariant` uses FFmpeg's built-in HLS muxer (`-f hls`). `-hls_time 6` creates 6-second segments. `-hls_playlist_type vod` writes the `#EXT-X-ENDLIST` tag so the player knows the stream is complete. `-scale=-2:height` keeps the width even (required by libx264) while preserving aspect ratio.
+- `generateMasterPlaylist` writes the `#EXT-X-STREAM-INF` entries that tell the player what variants are available. Resolutions are calculated assuming 16:9, but the actual scaling in FFmpeg handles any aspect ratio.
+- `uploadHlsOutput` walks the directory recursively and sets the correct `Content-Type` — `application/vnd.apple.mpegurl` for `.m3u8` files and `video/mp2t` for `.ts` segments. Without correct MIME types, some browsers and players will refuse to load the streams.
+
+### Update `src/index.ts` — HLS Processing Pipeline
+
+Replace the processing endpoint to use the HLS pipeline:
+
+```typescript
+import express from "express";
+import {
+  setupDirectories,
+  downloadRawVideo,
+  convertVideoToHls,
+  uploadHlsOutput,
+  deleteRawVideo,
+  deleteHlsOutput,
+} from "./storage";
+import { isVideoNew, setVideo } from "./firestore";
+
+setupDirectories();
+
+const app = express();
+app.use(express.json());
+
+const port = process.env.PORT || 3000;
+
+app.post("/process-video", async (req, res) => {
+  // Get the bucket and filename from the Cloud Pub/Sub message
+  let data;
+  try {
+    const message = Buffer.from(req.body.message.data, "base64").toString(
+      "utf8",
+    );
+    data = JSON.parse(message);
+    if (!data.name) {
+      throw new Error("Invalid message payload received.");
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(400).send("Bad Request: missing filename.");
+    return;
+  }
+
+  const inputFileName = data.name; // Format of <UID>-<DATE>.<EXTENSION>
+  const videoId = inputFileName.split(".")[0];
+
+  if (!(await isVideoNew(videoId))) {
+    res.status(400).send("Bad Request: video already processing or processed");
+    return;
+  }
+
+  await setVideo(videoId, {
+    id: videoId,
+    uid: videoId.split("-")[0],
+    status: "processing",
+  });
+
+  // Download the raw video from Cloud Storage
+  await downloadRawVideo(inputFileName);
+
+  // Transcode into multi-resolution HLS
+  let hlsOutputDir: string;
+  try {
+    hlsOutputDir = await convertVideoToHls(inputFileName, videoId);
+  } catch (err) {
+    await Promise.all([
+      deleteRawVideo(inputFileName),
+      deleteHlsOutput(videoId),
+    ]);
+    console.error(err);
+    res.status(500).send("Internal Server Error: video processing failed.");
+    return;
+  }
+
+  // Upload HLS output (master playlist + all variants) to Cloud Storage
+  await uploadHlsOutput(hlsOutputDir, videoId);
+
+  await setVideo(videoId, {
+    status: "processed",
+    filename: `${videoId}/master.m3u8`,
+  });
+
+  // Cleanup local files
+  await Promise.all([deleteRawVideo(inputFileName), deleteHlsOutput(videoId)]);
+
+  res.status(200).send("Processing finished successfully");
+});
+
+app.listen(port, () => {
+  console.log(`Video processing service listening at http://localhost:${port}`);
+});
+```
+
+The key difference from the single-file pipeline: instead of producing one `processed-<filename>.mp4`, the service now produces a directory tree (`<videoId>/master.m3u8`, `<videoId>/360p/...`, etc.) and stores `<videoId>/master.m3u8` as the `filename` in Firestore. The watch page uses this path to initialize the HLS player. Note that `isVideoNew` is now properly `await`ed (it was missing in the earlier version).
+
+### Update Firestore `Video` Interface
+
+No schema changes are needed. The `filename` field now stores `<videoId>/master.m3u8` instead of `processed-<filename>.mp4`. The `status` field works exactly the same way.
+
+### Update Cloud Storage CORS for HLS
+
+HLS requires the browser to fetch `.m3u8` playlists and `.ts` segments via `GET` requests. Update the CORS config for the **processed videos** bucket:
+
+Create `utils/gcs-cors-hls.json`:
+
+```json
+[
+  {
+    "origin": ["*"],
+    "responseHeader": ["Content-Type", "Content-Length", "Range"],
+    "method": ["GET", "HEAD"],
+    "maxAgeSeconds": 3600
+  }
+]
+```
+
+Apply it:
+
+```bash
+gcloud storage buckets update gs://codeyalaya-yt-processed-videos \
+  --cors-file=utils/gcs-cors-hls.json
+```
+
+The `Range` header is exposed because HLS.js uses range requests for efficient segment fetching. Without CORS on the processed bucket, the browser blocks the player from loading segments cross-origin.
+
+### Update the Dockerfile — Increase Resources
+
+Transcoding three variants is more CPU- and memory-intensive. Update the Cloud Run deployment:
+
+```bash
+gcloud run deploy video-processing-service \
+  --image us-central1-docker.pkg.dev/<PROJECT_ID>/video-processing-repo/video-processing-service \
+  --region=us-central1 \
+  --platform managed \
+  --timeout=3600 \
+  --memory=4Gi \
+  --cpu=2 \
+  --min-instances=0 \
+  --max-instances=1 \
+  --ingress=internal
+```
+
+`--memory=4Gi` and `--cpu=2` give FFmpeg more headroom for parallel encoding. The Dockerfile itself does not change — only the Cloud Run resource allocation.
+
+### Web Client — Install HLS.js
+
+HLS.js is a JavaScript library that implements the HLS protocol in the browser. Safari supports HLS natively, but Chrome, Firefox, and Edge require HLS.js.
+
+```bash
+cd youtube-webclient
+npm install hls.js
+```
+
+### Create `src/app/watch/hls-player.tsx` — Adaptive Video Player
+
+```tsx
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Hls from "hls.js";
+import styles from "./hls-player.module.css";
+
+interface HlsPlayerProps {
+  src: string; // Full URL to master.m3u8
+}
+
+interface QualityLevel {
+  index: number;
+  height: number;
+  label: string;
+}
+
+export default function HlsPlayer({ src }: HlsPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [levels, setLevels] = useState<QualityLevel[]>([]);
+  const [currentLevel, setCurrentLevel] = useState<number>(-1); // -1 = auto
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        startLevel: -1, // Start with auto quality selection
+        capLevelToPlayerSize: true, // Don't load higher quality than the player viewport
+      });
+
+      hls.loadSource(src);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        // Build the quality level list from the parsed manifest
+        const qualityLevels: QualityLevel[] = data.levels.map(
+          (level, index) => ({
+            index,
+            height: level.height,
+            label: `${level.height}p`,
+          }),
+        );
+        setLevels(qualityLevels);
+      });
+
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+        setCurrentLevel(data.level);
+      });
+
+      hlsRef.current = hls;
+
+      return () => {
+        hls.destroy();
+      };
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      // Safari has native HLS support
+      video.src = src;
+    }
+  }, [src]);
+
+  const handleQualityChange = (levelIndex: number) => {
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = levelIndex; // -1 = auto
+      setCurrentLevel(levelIndex);
+    }
+  };
+
+  return (
+    <div className={styles.playerContainer}>
+      <video ref={videoRef} className={styles.video} controls playsInline />
+
+      {levels.length > 0 && (
+        <div className={styles.qualitySelector}>
+          <span className={styles.qualityLabel}>Quality:</span>
+          <button
+            className={`${styles.qualityButton} ${
+              currentLevel === -1 ? styles.active : ""
+            }`}
+            onClick={() => handleQualityChange(-1)}
+          >
+            Auto
+          </button>
+          {levels.map((level) => (
+            <button
+              key={level.index}
+              className={`${styles.qualityButton} ${
+                currentLevel === level.index ? styles.active : ""
+              }`}
+              onClick={() => handleQualityChange(level.index)}
+            >
+              {level.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**How this works:**
+
+- `Hls.isSupported()` checks for MediaSource Extensions (MSE) support — available in Chrome, Firefox, and Edge. Safari uses native HLS and skips HLS.js entirely.
+- `startLevel: -1` tells HLS.js to pick the initial quality automatically based on estimated bandwidth.
+- `capLevelToPlayerSize: true` prevents loading 720p if the `<video>` element is only 360px tall — saves bandwidth.
+- `MANIFEST_PARSED` fires after HLS.js parses the master playlist and knows all available quality levels. The levels are stored in state for the quality selector UI.
+- `LEVEL_SWITCHED` fires when HLS.js switches quality (either automatically or manually), keeping the UI in sync.
+- `handleQualityChange(-1)` re-enables automatic bitrate adaptation. Setting `currentLevel` to a specific index locks the player to that quality.
+- The `useEffect` cleanup calls `hls.destroy()` to release all resources and detach from the video element when the component unmounts.
+
+### Create `src/app/watch/hls-player.module.css`
+
+```css
+.playerContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.video {
+  width: 100%;
+  max-height: 540px;
+  background: #000;
+  border-radius: 8px;
+}
+
+.qualitySelector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f1f1f1;
+  border-radius: 8px;
+}
+
+.qualityLabel {
+  font-family: "Roboto", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: #606060;
+  margin-right: 4px;
+}
+
+.qualityButton {
+  padding: 6px 14px;
+  border: 1px solid #ccc;
+  border-radius: 18px;
+  background: white;
+  font-family: "Roboto", sans-serif;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.qualityButton:hover {
+  background: #e8e8e8;
+  border-color: #aaa;
+}
+
+.qualityButton.active {
+  background: #065fd4;
+  color: white;
+  border-color: #065fd4;
+}
+```
+
+### Update `src/app/watch/page.tsx` — Use the HLS Player
+
+```tsx
+"use client";
+
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import HlsPlayer from "./hls-player";
+
+function VideoPlayer() {
+  const videoPrefix =
+    "https://storage.googleapis.com/codeyalaya-yt-processed-videos/";
+  const searchParams = useSearchParams();
+  const videoSrc = searchParams.get("v");
+
+  return (
+    <>
+      <h1>Watch Page</h1>
+      {videoSrc ? (
+        <HlsPlayer src={videoPrefix + videoSrc} />
+      ) : (
+        <p>No video selected</p>
+      )}
+    </>
+  );
+}
+
+function Loading() {
+  return <p>Loading video player...</p>;
+}
+
+export default function Watch() {
+  return (
+    <div>
+      <Suspense fallback={<Loading />}>
+        <VideoPlayer />
+      </Suspense>
+    </div>
+  );
+}
+```
+
+The only change from the original watch page is replacing the plain `<video>` element with the `<HlsPlayer>` component. The `src` is now `<prefix>/<videoId>/master.m3u8` (set by the processing service in Firestore). Everything else — the Suspense boundary, search params, and layout — stays the same.
+
+### Test the Full Pipeline
+
+1. **Upload a video** through the web client's Upload button
+2. **Cloud Storage → Pub/Sub → Cloud Run** triggers the processing service
+3. **Check Cloud Run logs** — you should see transcoding messages for each variant:
+   ```text
+   Transcoding 360p finished.
+   Transcoding 480p finished.
+   Transcoding 720p finished.
+   Master playlist generated.
+   HLS output for <videoId> uploaded and made public.
+   ```
+4. **Verify Cloud Storage** — the processed bucket should contain:
+   ```text
+   <videoId>/master.m3u8
+   <videoId>/360p/playlist.m3u8
+   <videoId>/360p/segment000.ts
+   <videoId>/360p/segment001.ts
+   ...
+   <videoId>/480p/playlist.m3u8
+   <videoId>/480p/segment000.ts
+   ...
+   <videoId>/720p/playlist.m3u8
+   <videoId>/720p/segment000.ts
+   ...
+   ```
+5. **Open the watch page** — the HLS player should load and show quality buttons (Auto, 360p, 480p, 720p)
+6. **Test quality switching** — click different quality buttons and observe the resolution change. Open browser DevTools → Network tab to see `.ts` segment requests switch between variants.
+7. **Test auto mode** — click Auto, then throttle the network in DevTools (Network → Slow 3G). The player should drop to 360p. Remove throttling and it should climb back to 720p.
+
+---
+
+## Content Delivery Network (CDN)
+
+Up to this point, every viewer fetches `.m3u8` playlists and `.ts` segments directly from the Cloud Storage bucket in `us-central1`. A user in Tokyo or São Paulo makes a round trip to that single region for every segment — adding latency, increasing buffering, and concentrating all egress costs on one location. A **Content Delivery Network** caches content at edge nodes worldwide so subsequent requests are served from the nearest point of presence (PoP).
+
+Google Cloud CDN integrates with Cloud Storage through an **external Application Load Balancer** with a **backend bucket**. Once enabled, the first request for a segment hits the origin (Cloud Storage), and the response is cached at the edge. All following requests for that segment from nearby users are served directly from the edge cache — typically in single-digit milliseconds.
+
+### How CDN Fits the Architecture
+
+```text
+Viewer (Browser + HLS.js)
+  │
+  ▼
+Cloud CDN Edge PoP (nearest to viewer)
+  │ cache miss? ──▶ Cloud Storage (us-central1)
+  │ cache hit?  ──▶ serve directly from edge
+  ▼
+HLS segments + playlists returned
+```
+
+The processing service still uploads to Cloud Storage as before. The only changes are:
+
+1. A load balancer + backend bucket + CDN layer in front of the processed videos bucket.
+2. The web client points to the CDN URL instead of the raw Cloud Storage URL.
+3. Cache-Control headers on uploaded files so the CDN knows how long to cache them.
+
+### Reserve a Static IP Address
+
+The load balancer needs a global static IP:
+
+```bash
+gcloud compute addresses create cdn-video-ip \
+  --global \
+  --ip-version=IPV4
+```
+
+Note the IP address for DNS configuration later:
+
+```bash
+gcloud compute addresses describe cdn-video-ip --global --format="value(address)"
+```
+
+### Create a Backend Bucket with CDN Enabled
+
+A backend bucket connects the load balancer to Cloud Storage:
+
+```bash
+gcloud compute backend-buckets create processed-videos-backend \
+  --gcs-bucket-name=codeyalaya-yt-processed-videos \
+  --enable-cdn \
+  --cache-mode=CACHE_ALL_STATIC \
+  --default-ttl=86400 \
+  --max-ttl=604800 \
+  --client-ttl=3600
+```
+
+| Flag                            | Purpose                                                                                                                    |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `--enable-cdn`                  | Turns on Cloud CDN caching at edge PoPs                                                                                    |
+| `--cache-mode=CACHE_ALL_STATIC` | Caches all responses with static content types (including `.m3u8` and `.ts`) even without explicit `Cache-Control` headers |
+| `--default-ttl=86400`           | Edge caches content for 24 hours if the origin doesn't set a `Cache-Control` header                                        |
+| `--max-ttl=604800`              | Maximum cache duration is 7 days, even if the origin sets a longer max-age                                                 |
+| `--client-ttl=3600`             | Tells the browser to cache for 1 hour via the `Cache-Control` header sent to the client                                    |
+
+### Create a URL Map
+
+The URL map routes incoming requests to the backend bucket:
+
+```bash
+gcloud compute url-maps create cdn-video-url-map \
+  --default-backend-bucket=processed-videos-backend
+```
+
+This is a simple setup with a single backend. In production, you could add path-based routing to serve thumbnails from a different backend.
+
+### Create an HTTPS Target Proxy and Forwarding Rule
+
+For HTTPS (recommended for production), you need an SSL certificate. Google-managed certificates are free and auto-renewing:
+
+```bash
+# Create a Google-managed SSL certificate (requires a custom domain)
+gcloud compute ssl-certificates create cdn-video-cert \
+  --domains=cdn.yourdomain.com \
+  --global
+
+# Create the HTTPS target proxy
+gcloud compute target-https-proxies create cdn-video-https-proxy \
+  --url-map=cdn-video-url-map \
+  --ssl-certificates=cdn-video-cert
+
+# Create the forwarding rule (binds the static IP to the proxy)
+gcloud compute forwarding-rules create cdn-video-https-rule \
+  --global \
+  --target-https-proxy=cdn-video-https-proxy \
+  --address=cdn-video-ip \
+  --ports=443
+```
+
+If you don't have a custom domain yet, you can use HTTP for testing:
+
+```bash
+# HTTP-only (testing only — not for production)
+gcloud compute target-http-proxies create cdn-video-http-proxy \
+  --url-map=cdn-video-url-map
+
+gcloud compute forwarding-rules create cdn-video-http-rule \
+  --global \
+  --target-http-proxy=cdn-video-http-proxy \
+  --address=cdn-video-ip \
+  --ports=80
+```
+
+### Configure DNS
+
+Point your custom domain to the static IP. Add an A record in your DNS provider:
+
+```text
+Type: A
+Name: cdn
+Value: <STATIC_IP_ADDRESS>
+TTL: 300
+```
+
+The Google-managed SSL certificate will auto-provision once DNS propagation completes (can take up to 24 hours, but usually much faster).
+
+### Set Cache-Control Headers on Uploaded Files
+
+The CDN respects `Cache-Control` headers set on objects in Cloud Storage. Update `uploadHlsOutput` in `src/storage.ts` to set appropriate caching headers:
+
+```typescript
+export async function uploadHlsOutput(
+  localDir: string,
+  videoId: string,
+): Promise<void> {
+  const bucket = storage.bucket(processedVideoBucketName);
+
+  async function uploadRecursive(dir: string) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        await uploadRecursive(fullPath);
+      } else {
+        const destination = path.relative(localProcessedVideoPath, fullPath);
+
+        // Determine Content-Type and Cache-Control
+        let contentType = "application/octet-stream";
+        let cacheControl = "public, max-age=86400"; // Default: 24 hours
+
+        if (entry.name.endsWith(".m3u8")) {
+          contentType = "application/vnd.apple.mpegurl";
+          // Playlists are small and should be fresh — short cache
+          cacheControl = "public, max-age=60, s-maxage=300";
+        } else if (entry.name.endsWith(".ts")) {
+          contentType = "video/mp2t";
+          // Segments are immutable once written — long cache
+          cacheControl = "public, max-age=604800, immutable";
+        }
+
+        await bucket.upload(fullPath, {
+          destination,
+          metadata: {
+            contentType,
+            cacheControl,
+          },
+        });
+      }
+    }
+  }
+
+  await uploadRecursive(localDir);
+
+  const [files] = await bucket.getFiles({ prefix: `${videoId}/` });
+  await Promise.all(files.map((file) => file.makePublic()));
+
+  console.log(`HLS output for ${videoId} uploaded and made public.`);
+}
+```
+
+**Cache strategy explained:**
+
+- **`.m3u8` playlists** — `max-age=60, s-maxage=300`. The browser caches for 1 minute, the CDN edge caches for 5 minutes. For VOD this is conservative; you could increase these values. The separation between `max-age` (browser) and `s-maxage` (CDN/proxy) lets you invalidate at the edge without waiting for browser caches to expire.
+- **`.ts` segments** — `max-age=604800, immutable`. Segments never change once written (their content is determined by the segment filename). `immutable` tells the browser to skip revalidation entirely. 7-day cache means segments stay at the edge for a full week, dramatically reducing origin egress.
+- The `public` directive is required for CDN caching. Without it, shared caches (CDN edge nodes) may not store the response.
+
+### Update the Web Client — CDN URL
+
+Update the video prefix in the watch page and anywhere else that references the processed videos bucket. Replace the raw Cloud Storage URL with your CDN domain:
+
+```tsx
+// Before (direct Cloud Storage)
+const videoPrefix =
+  "https://storage.googleapis.com/codeyalaya-yt-processed-videos/";
+
+// After (CDN — custom domain)
+const videoPrefix = "https://cdn.yourdomain.com/";
+
+// After (CDN — IP-based, HTTP only, for testing)
+// const videoPrefix = "http://<STATIC_IP_ADDRESS>/";
+```
+
+The path structure stays the same (`<videoId>/master.m3u8`). The CDN transparently proxies to Cloud Storage — no changes to HLS.js, the quality selector, or any other client code.
+
+### Update CORS for the CDN Origin
+
+The processed videos bucket already has CORS configured from the HLS section. If you're using a custom domain, add it to the allowed origins. Create `utils/gcs-cors-cdn.json`:
+
+```json
+[
+  {
+    "origin": [
+      "https://cdn.yourdomain.com",
+      "https://yt-web-client-v6j6pvk7fq-uc.a.run.app"
+    ],
+    "responseHeader": ["Content-Type", "Content-Length", "Range"],
+    "method": ["GET", "HEAD"],
+    "maxAgeSeconds": 86400
+  }
+]
+```
+
+```bash
+gcloud storage buckets update gs://codeyalaya-yt-processed-videos \
+  --cors-file=utils/gcs-cors-cdn.json
+```
+
+Note: `maxAgeSeconds` for CORS is increased to 86400 (24 hours). The CORS preflight response itself is cached by the browser, reducing the number of `OPTIONS` requests. This is separate from content caching.
+
+### Cache Invalidation
+
+When you reprocess a video (e.g., fixing encoding issues), the old segments may still be cached at the edge. Invalidate specific paths or everything under a video ID:
+
+```bash
+# Invalidate all cached content for a specific video
+gcloud compute url-maps invalidate-cdn-cache cdn-video-url-map \
+  --path="/<videoId>/*"
+
+# Invalidate a specific file
+gcloud compute url-maps invalidate-cdn-cache cdn-video-url-map \
+  --path="/<videoId>/master.m3u8"
+
+# Nuclear option: invalidate everything (use sparingly)
+gcloud compute url-maps invalidate-cdn-cache cdn-video-url-map \
+  --path="/*"
+```
+
+Invalidation is asynchronous and typically completes within a few minutes globally. It does not delete the content from Cloud Storage — it only removes it from edge caches so the next request fetches a fresh copy from the origin.
+
+**Best practice:** Instead of invalidating, use unique filenames. Since segment filenames already contain the video ID and a sequential number, reprocessing a video with a new video ID naturally avoids cache conflicts. Reserve invalidation for cases where you must update content at the same path.
+
+### Monitoring CDN Performance
+
+Google Cloud provides built-in CDN monitoring:
+
+```bash
+# View CDN cache hit ratio
+gcloud compute backend-buckets describe processed-videos-backend \
+  --format="value(cdnPolicy)"
+```
+
+In the Cloud Console: **Network services → Cloud CDN** → Select your backend → View metrics:
+
+- **Cache hit ratio** — Percentage of requests served from edge cache. For a video platform with repeat viewers, expect 80–95%+ after warmup.
+- **Bandwidth** — Total bytes served, split by cache hit vs. origin fetch.
+- **Latency** — Response times broken down by region. Edge-served responses should be under 50ms.
+- **Request count** — Total requests by status code. Watch for 404s (missing segments) and 403s (CORS/permissions issues).
+
+You can also check cache behavior from the command line:
+
+```bash
+# Check response headers to verify CDN is working
+curl -sI "https://cdn.yourdomain.com/<videoId>/360p/segment000.ts" | grep -i -E "(cache|age|x-goog)"
+```
+
+Look for:
+
+- `Age: <seconds>` — How long the response has been in the edge cache. If present, the request was a cache hit.
+- `X-Goog-Hash` — Confirms the response came from Cloud Storage (via CDN).
+- `Cache-Control: public, max-age=604800, immutable` — Confirms your caching headers are being forwarded.
+- `Via: 1.1 google` — Confirms the response was proxied through Google's infrastructure.
+
+### Cost Considerations
+
+CDN adds a caching layer but changes the cost structure:
+
+| Cost Component                 | Without CDN                      | With CDN                              |
+| ------------------------------ | -------------------------------- | ------------------------------------- |
+| **Storage**                    | Same                             | Same                                  |
+| **Egress (origin → internet)** | All traffic from `us-central1`   | Only cache misses                     |
+| **Egress (CDN → internet)**    | N/A                              | Cache hits served at CDN egress rates |
+| **CDN cache fill**             | N/A                              | Origin → edge transfer (per-region)   |
+| **HTTP/HTTPS requests**        | Cloud Storage operations pricing | CDN request pricing                   |
+| **Cache invalidation**         | N/A                              | Free (up to limits; throttled beyond) |
+
+CDN egress is generally **cheaper per GB** than direct Cloud Storage egress, and the cache hit ratio means most bytes are served from edge — reducing total origin egress significantly. For a video platform, the savings compound because popular videos are requested thousands of times but only fetched from origin once per edge per TTL.
+
+**Estimated savings example:** A 5-minute 720p video is ~100MB. With 10,000 views and a 90% cache hit ratio, only 1,000 requests hit the origin (100GB egress) instead of 10,000 (1TB egress). At GCP's standard egress pricing, that's roughly $85 saved per video.
