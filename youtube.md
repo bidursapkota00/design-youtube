@@ -50,10 +50,10 @@ npm init -y
 
 ```bash
 npm install express
-npm install --save-dev typescript ts-node @types/node @types/express
+npm install --save-dev typescript @types/express
 ```
 
-`express` is the web framework. `typescript` and `ts-node` enable writing and running TypeScript directly. `@types/node` and `@types/express` provide type definitions for Node.js and Express.
+`express` is the web framework. `typescript` is needed for type checking (`tsc --noEmit`) and production compilation (`tsc`). Node.js 24 runs `.ts` files natively by stripping types at startup, so `ts-node` is no longer needed. `@types/node` is bundled with modern Node.js versions. `@types/express` provides type definitions for Express.
 
 ### Create `.gitignore`
 
@@ -66,11 +66,13 @@ node_modules
 ```json
 {
   "compilerOptions": {
-    "target": "ES6",
-    "module": "CommonJS",
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "rootDir": "src",
     "outDir": "dist",
     "strict": true,
+    "verbatimModuleSyntax": true,
     "esModuleInterop": true
   },
   "include": ["src/**/*.ts"],
@@ -78,7 +80,7 @@ node_modules
 }
 ```
 
-`target` sets the JavaScript version to compile to. `module` specifies the module system. `rootDir` and `outDir` separate source and compiled files. `strict` enables all strict type-checking options. `esModuleInterop` allows default imports from CommonJS modules like Express.
+`target` sets the JavaScript version to compile to. `module` and `moduleResolution` are set to `NodeNext` to use native ES modules, matching the `"type": "module"` in `package.json`. `strict` enables all strict type-checking options. `verbatimModuleSyntax` ensures all type imports use `import type` syntax — this is required for Node.js 24's type stripping, which erases types without transforming module syntax. `esModuleInterop` allows default imports from CommonJS modules like Express.
 
 ### Update `package.json` Scripts
 
@@ -86,9 +88,10 @@ node_modules
 {
   "name": "video-processing-service",
   "version": "1.0.0",
-  "main": "index.js",
+  "type": "module",
+  "main": "dist/index.js",
   "scripts": {
-    "start": "ts-node src/index.ts",
+    "start": "node --watch src/index.ts",
     "build": "tsc",
     "serve": "node dist/index.js"
   },
@@ -97,8 +100,6 @@ node_modules
   "description": "",
   "devDependencies": {
     "@types/express": "^5.0.1",
-    "@types/node": "^22.15.2",
-    "ts-node": "^10.9.2",
     "typescript": "^5.8.3"
   },
   "dependencies": {
@@ -107,7 +108,7 @@ node_modules
 }
 ```
 
-`start` runs TypeScript directly for development. `build` compiles TypeScript to JavaScript. `serve` runs the compiled output for production.
+`"type": "module"` enables ES module syntax (`import`/`export`) natively. `start` uses `node --watch` to run TypeScript directly — Node.js 24 strips types at startup without any additional tooling, and `--watch` restarts the process on file changes (replacing `nodemon` + `ts-node`). `build` compiles TypeScript to JavaScript for production. `serve` runs the compiled output.
 
 ### Create `src/index.ts` — Basic Server
 
@@ -222,7 +223,7 @@ node_modules
 
 ```dockerfile
 # Stage 1: Build stage
-FROM node:18 AS builder
+FROM node:24 AS builder
 
 # Set the working directory in the container to /app
 WORKDIR /app
@@ -240,7 +241,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Production stage
-FROM node:18
+FROM node:24
 
 # Install ffmpeg in the container
 RUN apt-get update && apt-get install -y ffmpeg
@@ -264,27 +265,21 @@ EXPOSE 3000
 CMD [ "npm", "run", "serve" ]
 ```
 
-Stage 1 (`builder`) installs all dependencies including dev dependencies, compiles TypeScript to JavaScript, and produces the `dist/` folder. Stage 2 starts fresh with `node:18`, installs FFmpeg and only production dependencies, then copies the compiled output from the builder stage. This keeps the final image small by excluding TypeScript, type definitions, and build tools.
+Stage 1 (`builder`) installs all dependencies including dev dependencies, compiles TypeScript to JavaScript, and produces the `dist/` folder. Stage 2 starts fresh with `node:24`, installs FFmpeg and only production dependencies, then copies the compiled output from the builder stage. This keeps the final image small by excluding TypeScript, type definitions, and build tools. Although Node.js 24 can run `.ts` files directly, production still uses compiled output for faster startup and to catch type errors at build time.
 
 ### Create `Dockerfile.dev` — Single-Stage Development Build
 
-The multi-stage Dockerfile above is optimized for production. During development, you want hot reload so that code changes reflect immediately without rebuilding the image. This single-stage Dockerfile runs `ts-node` directly and uses a volume mount to sync your local source into the container:
-
-Install `nodemon` as a dev dependency if you haven't already:
-
-```bash
-npm install --save-dev nodemon
-```
+The multi-stage Dockerfile above is optimized for production. During development, you want hot reload so that code changes reflect immediately without rebuilding the image. Node.js 24 has built-in `--watch` mode and native TypeScript support, so no extra dependencies like `nodemon` or `ts-node` are needed:
 
 ```dockerfile
-FROM node:18
+FROM node:24
 
 # Install ffmpeg
 RUN apt-get update && apt-get install -y ffmpeg
 
 WORKDIR /app
 
-# Install all dependencies (including devDependencies for ts-node)
+# Install dependencies
 COPY package*.json ./
 RUN npm install
 
@@ -293,8 +288,8 @@ RUN npm install
 
 EXPOSE 3000
 
-# Run with ts-node for hot reload (use nodemon for auto-restart on changes)
-CMD [ "npx", "nodemon", "--watch", "src", "--ext", "ts", "--exec", "ts-node", "src/index.ts" ]
+# Node 24 runs .ts natively and --watch restarts on file changes
+CMD [ "node", "--watch", "src/index.ts" ]
 ```
 
 Build and run with a volume mount so your local `src/` is live-synced into the container:
@@ -307,7 +302,7 @@ docker build -f Dockerfile.dev -t video-processing-service-dev .
 docker run -p 3000:3000 -v $(pwd)/src:/app/src -d video-processing-service-dev
 ```
 
-`-f Dockerfile.dev` tells Docker to use the development Dockerfile instead of the default. `-v $(pwd)/src:/app/src` mounts your local `src/` directory into the container, so every file save triggers `nodemon` to restart `ts-node`. No rebuild needed between code changes. `nodemon` watches for `.ts` file changes in the `src` directory and automatically re-executes `ts-node`.
+`-f Dockerfile.dev` tells Docker to use the development Dockerfile instead of the default. `-v $(pwd)/src:/app/src` mounts your local `src/` directory into the container. Node.js 24's `--watch` flag monitors the file tree and restarts the process on changes — combined with native type stripping, this replaces both `nodemon` and `ts-node` with zero extra dependencies.
 
 ### Build & Run
 
