@@ -266,6 +266,49 @@ CMD [ "npm", "run", "serve" ]
 
 Stage 1 (`builder`) installs all dependencies including dev dependencies, compiles TypeScript to JavaScript, and produces the `dist/` folder. Stage 2 starts fresh with `node:18`, installs FFmpeg and only production dependencies, then copies the compiled output from the builder stage. This keeps the final image small by excluding TypeScript, type definitions, and build tools.
 
+### Create `Dockerfile.dev` — Single-Stage Development Build
+
+The multi-stage Dockerfile above is optimized for production. During development, you want hot reload so that code changes reflect immediately without rebuilding the image. This single-stage Dockerfile runs `ts-node` directly and uses a volume mount to sync your local source into the container:
+
+Install `nodemon` as a dev dependency if you haven't already:
+
+```bash
+npm install --save-dev nodemon
+```
+
+```dockerfile
+FROM node:18
+
+# Install ffmpeg
+RUN apt-get update && apt-get install -y ffmpeg
+
+WORKDIR /app
+
+# Install all dependencies (including devDependencies for ts-node)
+COPY package*.json ./
+RUN npm install
+
+# Source code is mounted via volume — no COPY needed
+# COPY . .  ← intentionally omitted
+
+EXPOSE 3000
+
+# Run with ts-node for hot reload (use nodemon for auto-restart on changes)
+CMD [ "npx", "nodemon", "--watch", "src", "--ext", "ts", "--exec", "ts-node", "src/index.ts" ]
+```
+
+Build and run with a volume mount so your local `src/` is live-synced into the container:
+
+```bash
+# Build the dev image
+docker build -f Dockerfile.dev -t video-processing-service-dev .
+
+# Run with volume mount — edits to src/ on your host reflect instantly
+docker run -p 3000:3000 -v $(pwd)/src:/app/src -d video-processing-service-dev
+```
+
+`-f Dockerfile.dev` tells Docker to use the development Dockerfile instead of the default. `-v $(pwd)/src:/app/src` mounts your local `src/` directory into the container, so every file save triggers `nodemon` to restart `ts-node`. No rebuild needed between code changes. `nodemon` watches for `.ts` file changes in the `src` directory and automatically re-executes `ts-node`.
+
 ### Build & Run
 
 ```bash
@@ -552,10 +595,13 @@ Create a new project in the Google Cloud Console and note the project ID (e.g., 
 
 ```bash
 gcloud -v                                # Verify installation
+gcloud components update                 # Update all components to latest
 gcloud auth login                        # Authenticate
 gcloud config set project <PROJECT_ID>   # Set active project
 gcloud config get-value project          # Verify project
 ```
+
+`gcloud components update` ensures all installed gcloud CLI components (including `gsutil`, `bq`, and `kubectl` if present) are at the latest version. Run this before any deployment to avoid compatibility issues with newer GCP APIs.
 
 ### Enable Artifact Registry
 
