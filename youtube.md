@@ -120,9 +120,7 @@ app.get("/", (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(
-    `Video processing service listening at http://localhost:${port}`
-  );
+  console.log(`Video processing service listening at http://localhost:${port}`);
 });
 ```
 
@@ -189,9 +187,7 @@ app.post("/process-video", (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(
-    `Video processing service listening at http://localhost:${port}`
-  );
+  console.log(`Video processing service listening at http://localhost:${port}`);
 });
 ```
 
@@ -384,7 +380,7 @@ export async function downloadRawVideo(fileName: string) {
     .download({ destination: `${localRawVideoPath}/${fileName}` });
 
   console.log(
-    `gs://${rawVideoBucketName}/${fileName} downloaded to ${localRawVideoPath}/${fileName}.`
+    `gs://${rawVideoBucketName}/${fileName} downloaded to ${localRawVideoPath}/${fileName}.`,
   );
 }
 
@@ -400,7 +396,7 @@ export async function uploadProcessedVideo(fileName: string) {
     destination: fileName,
   });
   console.log(
-    `${localProcessedVideoPath}/${fileName} uploaded to gs://${processedVideoBucketName}/${fileName}`
+    `${localProcessedVideoPath}/${fileName} uploaded to gs://${processedVideoBucketName}/${fileName}`,
   );
 
   await bucket.file(fileName).makePublic();
@@ -494,7 +490,7 @@ app.post("/process-video", async (req, res) => {
   let data;
   try {
     const message = Buffer.from(req.body.message.data, "base64").toString(
-      "utf8"
+      "utf8",
     );
     data = JSON.parse(message);
     if (!data.name) {
@@ -600,6 +596,7 @@ gcloud services enable run.googleapis.com
 ```
 
 From the Cloud Console:
+
 1. Search **Cloud Run** → **Create Service**
 2. Service name: `video-processing-service`
 3. Deploy from an existing container image → Select the pushed image
@@ -796,7 +793,7 @@ export function signOut() {
  * @returns A function to unsubscribe callback.
  */
 export function onAuthStateChangedHelper(
-  callback: (user: User | null) => void
+  callback: (user: User | null) => void,
 ) {
   return onAuthStateChanged(auth, callback);
 }
@@ -1028,7 +1025,7 @@ export const generateUploadUrl = onCall(
     if (!request.auth) {
       throw new functions.https.HttpsError(
         "failed-precondition",
-        "The function must be called while authenticated."
+        "The function must be called while authenticated.",
       );
     }
 
@@ -1047,7 +1044,7 @@ export const generateUploadUrl = onCall(
     });
 
     return { url, fileName };
-  }
+  },
 );
 ```
 
@@ -1065,9 +1062,17 @@ Verify in Google Cloud Console: Cloud Functions → `generateUploadUrl` (2nd gen
 
 The Cloud Function's service account needs permission to create signed URLs:
 
-1. **Cloud Storage bucket permissions**: Go to Cloud Storage → `codeyalaya-yt-raw-videos` → Permissions → Grant Access → Add the service account principal → Role: **Storage Object Admin**
+1. **Cloud Storage bucket permissions**: Go to Cloud Storage → `codeyalaya-yt-raw-videos` → Permissions → Grant Access → Add the service account principal (437029731285-compute@developer.gserviceaccount.com) → Role: **Cloud Storage → Storage Object Admin**
 
 2. **Service Account Token Creator role**: Go to IAM & Admin → Find the compute service account → Edit → Add role: **Service Account Token Creator**
+
+3. **Verify from CLI**
+
+```bash
+gcloud describe functions generateUploadUrl --region=us-central1
+...
+Service Account: 437029731285-compute@developer.gserviceaccount.com
+```
 
 ### Configure CORS on the Raw Videos Bucket
 
@@ -1177,7 +1182,7 @@ export default function Upload() {
     try {
       const response = await uploadVideo(file);
       alert(
-        `File uploaded successfully. Response: ${JSON.stringify(response)}`
+        `File uploaded successfully. Response: ${JSON.stringify(response)}`,
       );
     } catch (error) {
       alert(`Failed to upload file: ${error}`);
@@ -1319,7 +1324,7 @@ app.post("/process-video", async (req, res) => {
   let data;
   try {
     const message = Buffer.from(req.body.message.data, "base64").toString(
-      "utf8"
+      "utf8",
     );
     data = JSON.parse(message);
     if (!data.name) {
