@@ -779,3 +779,382 @@ Service Account Token Creator
 
 PS C: \Users\dell\Desktop\codeyalaya\youtube-api-functions\functions> gcloud functions describe generateUploadUrl --region=us-centr
 • al1
+serviceAccountEmail: 167939938275-compute@developer-gserviceaccount.com
+
+Set up and view CORS configurations docs
+Command line
+goloud
+1. Create a JSON file with the CORS configuration you would like to apply. See
+configuration examples for sample JSON files.
+2. Use the goloud storage buckets update command with the --corsfile flag:
+goloud storage buckets update gs:/ / BUCKET_NAME /
+--cors-file=Cl
+
+{} gcs-cors.json
+[
+    {
+"origin": ["*"],
+"responseHeader": ["Content-Type"],
+"method": ["PUT"],
+"maxAgeSeconds": 3600
+    }
+]
+
+• navi@Navi-Desktop:~/youtube-clone$ gcloud storage buck
+ets update gs://nc-yt-raw-videos_--cors-file=utils/gcs
+- cors. json
+
+IAM Service Account Credentials API
+ENABLE
+
+import (getFunctions, httpsCallable} from 'firebase/functions';
+const functions = getFunctions);
+const generateUploadUr1 = httpsCallable(functions, 'generateUploadUr1');
+export async function uploadVideo file: File) {
+const response: any = await generateUploadUr1({
+fileExtension: file.name.split('•'). pop()
+}) ;
+// Upload the file via the signed URL
+await fetchgresponse?.data?.url, (
+method: "PUT',
+body: file,
+headers: {
+'Content-Type': file.type
+}) ;
+return;
+}
+
+# upload.module.css U X
+• uploadinput {
+display: none;
+• uploadButton E
+display: flex; /* Use Flexbox to center the text */
+justify-content: center; /* Center text horizontally */
+align-items: center; /* Center text vertically */
+width: 25px;
+height: 25px;
+border-radius: 50%; /* Make it circular */
+color: black; /* Color of the text */
+border: none;
+cursor: pointer;
+font-size: 10px;
+padding: 0.4em;
+• uploadButton: hover {
+background-color:
+Irgb (230, 230, 230);
+
+
+upload.tsx U X
+'use client';
+import { Fragment } from "react";
+import { uploadVideo } from "../firebase/functions";
+import styles from "./upload.module.css";
+export default function Upload() {
+return d
+<Fragment>
+‹input id="upload" className={styles.uploadInput) type="file" accept="video/*"
+/ >
+‹label htmlFor="upload" className={styles. uploadButton}>
+‹svg xmIns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth=(1.2}
+‹path strokeLinecap="round" d="M15.75 10.514.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 0
+</ svg>
+</label>
+
+navbar.tsx
+<nav className={styles.nav}>
+‹Link href="/">
+< Image width=(90} height=(20}
+src="/youtube-logo.svg" alt="YouTube Logo"/>
+</Link>
+user && ‹Upload
+• />
+You, 19 seconds ago • Uncommitted changes
+‹SignIn user={user} />
+< / nav>
+) ;
+
+upload.tsx >
+import styles from
+"./upload.module.css";
+export default function Upload() {
+const handleFileChange = (event: React. ChangeEvent<HTMLInputElement>) => {
+const file = event.target.files?.item(0);
+if (file) {
+handleUpload(file);
+const handleUpload = async (file: File) =>
+try t
+const response = await uploadvideo(file);
+alert File uploaded successfully. Response: ${JSON. stringify(response)}°);
+catch (error) {
+alert Failed to upload file: $(error}');
+return (
+‹Fragment>
+‹input id="upload" className={styles.uploadInput} type="file" accept="video/*"
+onChange-(handleFi leChange}
+‹label htmlFor="upload" className=(styles. uploadButton}>
+‹svg xmIns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth=(1.2)
+‹path strokeLinecap=" round" d="M15.75 10.514.72-4.72a.75.75 © 011.28.53v11.38a.75.75 0
+</ svg>
+</label>
+</Fragment>
+
+navi@Navi-Desktop:~/youtube-clone/video-processing-se
+orvice$ npm i firebase-admin
+
+const firestore =
+getFirestore("codeyalaya");
+
+firestore.ts>...
+import { credential } from "firebase-admin";
+import
+finitializeApp} from "firebase-admin/app";
+import {Firestore} from "firebase-admin/firestore";
+initializeApp({credential: credential. applicationDefault()});
+const firestore = new Firestore();|
+// Note: This requires setting an env variable in Cloud Run
+/** if (process. env. NODE_ENV !== "production') {
+firestore. settings(f
+host: "localhost: 8080", // Default port for Firestore emulator
+ssl: false
+}) ;
+* /
+
+const videoCollectionId = 'videos';
+export interface Video E
+id?: string,
+uid?: string,
+filename?: string,
+status?: 'processing' | "processed',
+title?: string,
+description?: string
+
+async function getVideo(videold: string) {
+const snapshot = await firestore.collection(videoCollectionId).doc (videoId). get ();
+return (snapshot. data() as Video) ?? {;
+export function setVideo(videoId: string, video: Video) {
+return firestore
+• collection (videoCollectionId)
+• doc (videoId)
+• set video, { merge: true })
+export async function isVideoNew (videoId: string) {
+const video = await getVideo (videoId);
+return video?. status === undefined;
+
+video-processing-service > src > TS index.ts >
+" app.post("/process-video") callback
+console.error(error);
+return res. status (400) . send ('Bad Request: missing filename. ');
+}
+const inputFileName = data.name; // Format of <UID>-‹DATE>. ‹EXTENSION>
+const outputFileName = "processed-${inputFileName}';
+const videold = inputFileName.split('•') [0];
+if (!isVideoNew (videoId)) {
+return res. status (400). send ('Bad Request: video already processing or processed');
+} else
+await setVideo(videold, {
+id: videold,
+uid: videold.split('-') [0],
+status: 'processing'
+5);.
+// Download the raw video from Cloud Storage
+await downloadRawVideo(inputFileName) ;
+
+await setVideo@videold, {
+status: 'processed',
+filename: outputFileName
+
+• navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker build -
+t us-central1-docker.pkg.dev/yt-clone-3dce6/video-processing-repo/video-pr
+ocessing-service .
+
+o navi@Navi-Desktop:~/youtube-clone/video-processing-service$ docker push us
+-central1-docker.pkg.dev/yt-clone-3dce6/video-processing-repo/video-proces
+sing-service
+
+loy video-processing-service --image us-central1-docker.pkg.dev/PROJECT_ID
+/video-processing-repo/video-processing-service V
+- - region=us-central1 V
+--platform managed
+--timeout=3600
+- - memory= 2Gi
+optional way, from ui too
+- - cpu=1
+--min-instances=0
+--max-instances=1
+- - ingress=internal
+
+const videoCollectionId = "videos";
+export interface Video {
+• id?: string,
+uid?: string,
+filename?: string,
+status?: "processing" | "processed",
+title?: string,
+description?: string
+
+export const getVideos = onCall((maxInstances: 1), async () => CI
+const snapshot = await firestore.collection(videoCollectionId). limit (10). get();
+return snapshot.docs.map( (doc) => doc. data ()) ;
+5) ;
+
+• navi@Navi-Desktop:~/youtube-clone/yt-api-service/functions$ firebase deplo
+y --only functions:getVideos
+
+= Google Cloud
+Cloud Run
+getvideos
+Region: us-central1
+URL: https://getvideos-vojopk//g-uc.a.run.app
+
+TC New Request
+POST
+https://getvideos-v6j6pvk7tq-uc.a.run.app
+"data": {}
+}
+Status: 200 OK
+"result": [
+"uid": "82556WyT0mV4xkMtHOvaA97WwrV2",
+"id": "82556WyTØmV4xkМtH0vaA97wwrV2-1689378642819",
+"filename": "processed-82556WyT0mV4xkMtHOvaA97WwrV2-1689378642819.mp4",
+"status": "processed"
+
+functions.ts •
+const getVideosFunction = httpsCallable(functions, 'getVideos');
+export interface Video {
+id?: string,
+uid?: string,
+filename?: string,
+status?: 'processing' | 'processed'
+title?: string,
+description?: string
+
+export async function getVideos() E
+const response = await getVideosFunction();
+return response. data;|
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+export const functions = getFunctions); //cut and paste here
+
+functions.ts
+import
+{httpsCallable} from 'firebase/functions';
+import {functions} from
+'../firebase'; 
+
+firebase.ts
+import { getFunctions } from "firebase/functions";|
+
+export async function getVideos () E
+const response = await getVideosFunction();
+return response. data as Video];
+
+• page.tsx - youtube-clone [WSL: Ubuntu] - Visual Studio Code
+import styles from './page.module.css';
+import Link from 'next/link';
+import Image from 'next/image';
+import { getVideos } from './firebase/functions';
+export default async function Home () {
+const videos = await getVideos ();
+return
+<main className=(styles.main}>
+videos. map (video) => (
+‹Link href={/watch?v=${video.filename} } key={video.id}>
+‹ Image src={"/thumbnail png'} alt='video' width= (120) height=(80}
+className=(styles.thumbnail}/>
+</Link>
+)) :
+</main›
+
+• thumbnail {
+margin: 10px;
+
+page.tsx.../watch M X
+'use client';
+import { useSearchParams } from 'next/navigation';
+export default function Watch() K
+const videoPrefix = https://storage.googleapis.com/nc-yt-processed-videos/';
+const videoSrc = useSearchParams) • get('v');
+return (
+< div>
+<h1>Watch Page</h1>
+‹video controls src=(videoPrefix + videoSrc}/>
+</div>
+) ;
+
+• page.ts M
+export const revalidate = 30;
+
+.dockerignore
+node_modules
+
+yt-web-client > • Dockerfile > ...
+# Stage 1: Build stage
+FROM node:18 AS builder
+# Set the working directory
+WORKDIR /app
+# Copy package*. json files
+COPY package*.json ./
+# Install all dependencies
+RUN npm install
+# Copy other source code files
+COPY • •
+# Build the app
+RUN npm run build
+# Stage 2: Production stage
+FROM node:18
+
+# Set the working directory
+WORKDIR /app
+# Copy package*. json files
+COPY package*. json ./
+# Install only production dependencies
+RUN npm install --only=production
+# Copy built app from the builder stage
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+# Expose the listening port
+EXPOSE 3000
+# Run the app
+CMD [ "npm", "start" ]
+
+Repositories
++ CREATE REPOSITORY
+yt-web-client-repo
+Format
+• Docker
+Mode
+• Standard
+Location type
+• Region
+
+Encryption
+• Google-managed encryption key
+
+• navi@Navi-Desktop:~/youtube-clone/yt-web-client$ docker build -t us-centra
+11-docker. pkg.dev/<PROJECT_ID>/lyt-web-client-repo/yt-web-client •
+
+• navi@Navi-Desktop:~/youtube-clone/yt-web-client$ docker push us-central1-d
+ocker. pkg.dev/<PROJECT_ID>/yt-web-client-repo/yt-web-client
+
+• navi@Navi-Desktop:~/youtube-clone/yt-web-client$ gcloud run deploy yt-webclient --image us-central1-docker.pkg.dev/PROJECT_ID/yt-web-client-repo/yt
+-web-client
+- - region=us-central1
+- -platform managed
+--timeout=3600
+- -memory= 2Gi
+- - cpu=1
+--min-instances=0
+- -max-instances=1
+
+Allow unauthenticated invocations to [yt-web-client] (y/N)? y
+
+Service URL: https://yt-web-client-v6j6pvk7fq-uc.a.run.app
+
+consale.firabase.google.com/project/yt-done-3dceb/authentication/settings
+Firebase
+• Authentication
+Authorized domains
+https://yt-web-client-v6j6pvk7fq-uc.a.run.app/l
+Add
