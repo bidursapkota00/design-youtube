@@ -1383,7 +1383,7 @@ app.post("/process-video", async (req, res) => {
   const outputFileName = `processed-${inputFileName}`;
   const videoId = inputFileName.split(".")[0];
 
-  if (!isVideoNew(videoId)) {
+  if (!(await isVideoNew(videoId))) {
     res.status(400).send("Bad Request: video already processing or processed");
     return;
   } else {
@@ -2104,7 +2104,7 @@ app.listen(port, () => {
 });
 ```
 
-The key difference from the single-file pipeline: instead of producing one `processed-<filename>.mp4`, the service now produces a directory tree (`<videoId>/master.m3u8`, `<videoId>/360p/...`, etc.) and stores `<videoId>/master.m3u8` as the `filename` in Firestore. The watch page uses this path to initialize the HLS player. Note that `isVideoNew` is now properly `await`ed (it was missing in the earlier version).
+The key difference from the single-file pipeline: instead of producing one `processed-<filename>.mp4`, the service now produces a directory tree (`<videoId>/master.m3u8`, `<videoId>/360p/...`, etc.) and stores `<videoId>/master.m3u8` as the `filename` in Firestore. The watch page uses this path to initialize the HLS player.
 
 ### Update Firestore `Video` Interface
 
