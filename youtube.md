@@ -21,6 +21,7 @@
 15. [Deploying the Web Client](#deploying-the-web-client)
 16. [Adaptive Streaming — HLS with M3U8](#adaptive-streaming--hls-with-m3u8)
 17. [Content Delivery Network (CDN)](#content-delivery-network-cdn)
+18. [Design Netflix — Subscription-Based Streaming with Khalti Payment Gateway](#design-netflix--subscription-based-streaming-with-khalti-payment-gateway)
 
 ---
 
@@ -2712,3 +2713,1132 @@ CDN adds a caching layer but changes the cost structure:
 CDN egress is generally **cheaper per GB** than direct Cloud Storage egress, and the cache hit ratio means most bytes are served from edge — reducing total origin egress significantly. For a video platform, the savings compound because popular videos are requested thousands of times but only fetched from origin once per edge per TTL.
 
 **Estimated savings example:** A 5-minute 720p video is ~100MB. With 10,000 views and a 90% cache hit ratio, only 1,000 requests hit the origin (100GB egress) instead of 10,000 (1TB egress). At GCP's standard egress pricing, that's roughly $85 saved per video.
+
+---
+
+## Design Netflix — Subscription-Based Streaming with Khalti Payment Gateway
+
+This section extends the YouTube architecture into a Netflix-like system where videos are **private by default** and only accessible to users with an active subscription. Instead of `file.makePublic()`, we serve videos through **signed URLs** generated on demand after verifying the user's subscription status. Payments are handled through **Khalti**, Nepal's payment gateway, using their ePayment v2 API.
+
+### Architecture Differences from YouTube
+
+| Aspect | YouTube (Public) | Netflix (Subscription) |
+| --- | --- | --- |
+| **Video access** | `file.makePublic()` — anyone can view | Private bucket — signed URLs only |
+| **Authentication** | Optional for viewing | Required for all video access |
+| **Authorization** | None | Subscription tier check before serving |
+| **Payment** | None | Khalti ePayment integration |
+| **User model** | Basic profile | Profile + subscription status + payment history |
+| **Upload** | Any authenticated user | Admin-only (content management) |
+
+The core video processing pipeline (upload → Pub/Sub → Cloud Run → FFmpeg → HLS) remains identical. The difference is entirely in **how processed videos are served** and **who can access them**.
+
+### Subscription Tiers
+
+Define the subscription plans your platform offers:
+
+```typescript
+// src/types/subscription.ts
+
+export interface SubscriptionPlan {
+  id: string;
+  name: string;
+  priceNPR: number; // Price in Nepali Rupees
+  pricePaisa: number; // Khalti uses paisa (1 NPR = 100 paisa)
+  durationDays: number;
+  maxResolution: string; // e.g., "1080p", "4K"
+  maxConcurrentStreams: number;
+  features: string[];
+}
+
+export const SUBSCRIPTION_PLANS: Record<string, SubscriptionPlan> = {
+  basic: {
+    id: "basic",
+    name: "Basic",
+    priceNPR: 299,
+    pricePaisa: 29900,
+    durationDays: 30,
+    maxResolution: "720p",
+    maxConcurrentStreams: 1,
+    features: ["SD & HD streaming", "Watch on 1 device", "Cancel anytime"],
+  },
+  standard: {
+    id: "standard",
+    name: "Standard",
+    priceNPR: 599,
+    pricePaisa: 59900,
+    durationDays: 30,
+    maxResolution: "1080p",
+    maxConcurrentStreams: 2,
+    features: [
+      "Full HD streaming",
+      "Watch on 2 devices",
+      "Download for offline",
+      "Cancel anytime",
+    ],
+  },
+  premium: {
+    id: "premium",
+    name: "Premium",
+    priceNPR: 999,
+    pricePaisa: 99900,
+    durationDays: 30,
+    maxResolution: "4K",
+    maxConcurrentStreams: 4,
+    features: [
+      "4K + HDR streaming",
+      "Watch on 4 devices",
+      "Download for offline",
+      "Spatial Audio",
+      "Cancel anytime",
+    ],
+  },
+};
+```
+
+### Firestore Schema
+
+#### Users Collection (Extended)
+
+```
+users/{userId}
+├── email: string
+├── displayName: string
+├── photoUrl: string
+├── subscription: {
+│     status: "active" | "expired" | "cancelled" | "none"
+│     planId: "basic" | "standard" | "premium" | null
+│     startDate: Timestamp
+│     endDate: Timestamp
+│     autoRenew: boolean
+│     lastPaymentId: string  // Reference to payments collection
+│   }
+└── createdAt: Timestamp
+```
+
+#### Payments Collection
+
+```
+payments/{paymentId}
+├── userId: string
+├── planId: string
+├── amountPaisa: number
+├── amountNPR: number
+├── khaltiPidx: string      // Khalti's payment identifier
+├── khaltiTransactionId: string  // After verification
+├── status: "initiated" | "completed" | "failed" | "expired" | "refunded"
+├── initiatedAt: Timestamp
+├── completedAt: Timestamp | null
+└── metadata: {
+      purchaseOrderId: string
+      purchaseOrderName: string
+    }
+```
+
+#### Subscriptions History Collection
+
+```
+subscriptionHistory/{historyId}
+├── userId: string
+├── planId: string
+├── paymentId: string
+├── startDate: Timestamp
+├── endDate: Timestamp
+└── status: "active" | "expired" | "cancelled"
+```
+
+### Khalti Payment Gateway — Integration
+
+Khalti's ePayment v2 API uses a server-to-server flow: **Initiate → Redirect → Verify**. Your backend initiates the payment, Khalti handles the checkout UI, and your backend verifies the result. The user never sees your secret key.
+
+#### Environment Configuration
+
+```typescript
+// functions/src/config/khalti.ts
+
+export const khaltiConfig = {
+  // Use sandbox for development, production for live
+  baseUrl: process.env.KHALTI_ENV === "production"
+    ? "https://khalti.com/api/v2"
+    : "https://dev.khalti.com/api/v2",
+  secretKey: process.env.KHALTI_SECRET_KEY!,
+  returnUrl: process.env.KHALTI_RETURN_URL!, // e.g., https://yourapp.com/payment/callback
+  websiteUrl: process.env.WEBSITE_URL!,       // e.g., https://yourapp.com
+};
+```
+
+Store secrets using Firebase environment configuration:
+
+```bash
+# Set Khalti secrets (never commit these)
+firebase functions:secrets:set KHALTI_SECRET_KEY
+firebase functions:secrets:set KHALTI_RETURN_URL
+firebase functions:secrets:set KHALTI_ENV
+firebase functions:secrets:set WEBSITE_URL
+```
+
+#### Khalti Service — Initiate & Verify
+
+```typescript
+// functions/src/services/khaltiService.ts
+
+import { khaltiConfig } from "../config/khalti.js";
+
+interface KhaltiInitiateResponse {
+  pidx: string;
+  payment_url: string;
+  expires_at: string;
+  expires_in: number;
+}
+
+interface KhaltiLookupResponse {
+  pidx: string;
+  total_amount: number;
+  status: "Completed" | "Pending" | "Initiated" | "Expired" | "User canceled";
+  transaction_id: string;
+  fee: number;
+  refunded: boolean;
+}
+
+export async function initiateKhaltiPayment(params: {
+  amount: number; // in paisa
+  purchaseOrderId: string;
+  purchaseOrderName: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+}): Promise<KhaltiInitiateResponse> {
+  const response = await fetch(
+    `${khaltiConfig.baseUrl}/epayment/initiate/`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Key ${khaltiConfig.secretKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        return_url: khaltiConfig.returnUrl,
+        website_url: khaltiConfig.websiteUrl,
+        amount: params.amount,
+        purchase_order_id: params.purchaseOrderId,
+        purchase_order_name: params.purchaseOrderName,
+        customer_info: {
+          name: params.customerName,
+          email: params.customerEmail,
+          phone: params.customerPhone,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Khalti initiation failed: ${error}`);
+  }
+
+  return response.json();
+}
+
+export async function verifyKhaltiPayment(
+  pidx: string
+): Promise<KhaltiLookupResponse> {
+  const response = await fetch(
+    `${khaltiConfig.baseUrl}/epayment/lookup/`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Key ${khaltiConfig.secretKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ pidx }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Khalti lookup failed: ${error}`);
+  }
+
+  return response.json();
+}
+```
+
+### Cloud Functions — Payment Endpoints
+
+#### Initiate Subscription Payment
+
+When a user selects a plan, the frontend calls this function. It creates a payment record in Firestore, initiates the Khalti payment, and returns the `payment_url` for client-side redirect.
+
+```typescript
+// functions/src/index.ts (add to existing exports)
+
+import * as functions from "firebase-functions";
+import { initializeApp } from "firebase-admin/app";
+import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import {
+  initiateKhaltiPayment,
+  verifyKhaltiPayment,
+} from "./services/khaltiService.js";
+import { SUBSCRIPTION_PLANS } from "./types/subscription.js";
+
+initializeApp();
+const firestore = getFirestore();
+
+export const initiateSubscription = functions.https.onCall(
+  async (request) => {
+    // Ensure user is authenticated
+    if (!request.auth) {
+      throw new functions.https.HttpsError(
+        "unauthenticated",
+        "Must be logged in to subscribe."
+      );
+    }
+
+    const { planId, phone } = request.data as {
+      planId: string;
+      phone: string;
+    };
+
+    // Validate plan
+    const plan = SUBSCRIPTION_PLANS[planId];
+    if (!plan) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        `Invalid plan: ${planId}`
+      );
+    }
+
+    // Check if user already has an active subscription
+    const userDoc = await firestore.doc(`users/${request.auth.uid}`).get();
+    const userData = userDoc.data();
+    if (
+      userData?.subscription?.status === "active" &&
+      userData?.subscription?.endDate?.toDate() > new Date()
+    ) {
+      throw new functions.https.HttpsError(
+        "already-exists",
+        "You already have an active subscription."
+      );
+    }
+
+    // Create payment record in Firestore
+    const purchaseOrderId = `SUB_${request.auth.uid}_${Date.now()}`;
+    const paymentRef = firestore.collection("payments").doc();
+
+    await paymentRef.set({
+      userId: request.auth.uid,
+      planId: plan.id,
+      amountPaisa: plan.pricePaisa,
+      amountNPR: plan.priceNPR,
+      khaltiPidx: null,
+      khaltiTransactionId: null,
+      status: "initiated",
+      initiatedAt: FieldValue.serverTimestamp(),
+      completedAt: null,
+      metadata: {
+        purchaseOrderId,
+        purchaseOrderName: `${plan.name} Plan — ${plan.durationDays} Days`,
+      },
+    });
+
+    // Initiate Khalti payment
+    try {
+      const khaltiResponse = await initiateKhaltiPayment({
+        amount: plan.pricePaisa,
+        purchaseOrderId,
+        purchaseOrderName: `${plan.name} Plan — ${plan.durationDays} Days`,
+        customerName: request.auth.token.name || "User",
+        customerEmail: request.auth.token.email || "",
+        customerPhone: phone,
+      });
+
+      // Update payment record with Khalti pidx
+      await paymentRef.update({
+        khaltiPidx: khaltiResponse.pidx,
+      });
+
+      return {
+        paymentUrl: khaltiResponse.payment_url,
+        pidx: khaltiResponse.pidx,
+        paymentId: paymentRef.id,
+        expiresIn: khaltiResponse.expires_in,
+      };
+    } catch (error) {
+      // Mark payment as failed
+      await paymentRef.update({ status: "failed" });
+      throw new functions.https.HttpsError(
+        "internal",
+        "Payment initiation failed. Please try again."
+      );
+    }
+  }
+);
+```
+
+#### Verify Payment & Activate Subscription
+
+After Khalti redirects the user back to your `return_url`, the frontend calls this function with the `pidx` to verify the payment and activate the subscription.
+
+```typescript
+// functions/src/index.ts (continued)
+
+export const verifySubscriptionPayment = functions.https.onCall(
+  async (request) => {
+    if (!request.auth) {
+      throw new functions.https.HttpsError(
+        "unauthenticated",
+        "Must be logged in."
+      );
+    }
+
+    const { pidx } = request.data as { pidx: string };
+    if (!pidx) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "Missing pidx."
+      );
+    }
+
+    // Find the payment record by pidx
+    const paymentQuery = await firestore
+      .collection("payments")
+      .where("khaltiPidx", "==", pidx)
+      .where("userId", "==", request.auth.uid)
+      .limit(1)
+      .get();
+
+    if (paymentQuery.empty) {
+      throw new functions.https.HttpsError(
+        "not-found",
+        "Payment record not found."
+      );
+    }
+
+    const paymentDoc = paymentQuery.docs[0];
+    const paymentData = paymentDoc.data();
+
+    // Already completed — return early (idempotent)
+    if (paymentData.status === "completed") {
+      return { status: "already_active", message: "Subscription is active." };
+    }
+
+    // Verify with Khalti (server-to-server — never trust frontend params)
+    const verification = await verifyKhaltiPayment(pidx);
+
+    if (verification.status !== "Completed") {
+      await paymentDoc.ref.update({
+        status: verification.status === "User canceled" ? "failed" : "expired",
+      });
+
+      return {
+        status: "failed",
+        message: `Payment ${verification.status.toLowerCase()}. Please try again.`,
+      };
+    }
+
+    // Verify amount matches (prevent tampering)
+    if (verification.total_amount !== paymentData.amountPaisa) {
+      await paymentDoc.ref.update({ status: "failed" });
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Payment amount mismatch."
+      );
+    }
+
+    // Payment verified — activate subscription
+    const plan = SUBSCRIPTION_PLANS[paymentData.planId];
+    const now = new Date();
+    const endDate = new Date(now);
+    endDate.setDate(endDate.getDate() + plan.durationDays);
+
+    const batch = firestore.batch();
+
+    // Update payment record
+    batch.update(paymentDoc.ref, {
+      status: "completed",
+      khaltiTransactionId: verification.transaction_id,
+      completedAt: FieldValue.serverTimestamp(),
+    });
+
+    // Update user subscription
+    batch.update(firestore.doc(`users/${request.auth.uid}`), {
+      subscription: {
+        status: "active",
+        planId: plan.id,
+        startDate: Timestamp.fromDate(now),
+        endDate: Timestamp.fromDate(endDate),
+        autoRenew: false,
+        lastPaymentId: paymentDoc.id,
+      },
+    });
+
+    // Create subscription history entry
+    const historyRef = firestore.collection("subscriptionHistory").doc();
+    batch.set(historyRef, {
+      userId: request.auth.uid,
+      planId: plan.id,
+      paymentId: paymentDoc.id,
+      startDate: Timestamp.fromDate(now),
+      endDate: Timestamp.fromDate(endDate),
+      status: "active",
+    });
+
+    await batch.commit();
+
+    return {
+      status: "success",
+      message: "Subscription activated!",
+      subscription: {
+        planId: plan.id,
+        planName: plan.name,
+        startDate: now.toISOString(),
+        endDate: endDate.toISOString(),
+      },
+    };
+  }
+);
+```
+
+### Private Video Access — Signed URLs
+
+The critical difference from the YouTube design: videos are **never made public**. Instead, we generate short-lived signed URLs for authenticated subscribers.
+
+#### Remove `makePublic()` from Upload
+
+In the video processing service, replace the public access call with private upload only:
+
+```typescript
+// video-processing-service/src/storage.ts (modified)
+
+// BEFORE (YouTube — public access):
+// const [files] = await bucket.getFiles({ prefix: `${videoId}/` });
+// await Promise.all(files.map((file) => file.makePublic()));
+
+// AFTER (Netflix — private, no makePublic):
+// Files are uploaded as private by default. No makePublic() call.
+// Access is controlled through signed URLs generated at request time.
+
+async function uploadToProcessedBucket(
+  localDir: string,
+  videoId: string
+): Promise<void> {
+  const bucket = storage.bucket(processedVideoBucketName);
+
+  async function uploadRecursive(dir: string) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        await uploadRecursive(fullPath);
+      } else {
+        const destination = path.relative(localProcessedVideoPath, fullPath);
+
+        let contentType = "application/octet-stream";
+        if (entry.name.endsWith(".m3u8")) {
+          contentType = "application/vnd.apple.mpegurl";
+        } else if (entry.name.endsWith(".ts")) {
+          contentType = "video/mp2t";
+        }
+
+        // Upload as private — no makePublic()
+        await bucket.upload(fullPath, {
+          destination,
+          metadata: { contentType },
+        });
+      }
+    }
+  }
+
+  await uploadRecursive(localDir);
+  console.log(`HLS output for ${videoId} uploaded (private).`);
+}
+```
+
+#### Signed URL Generation Cloud Function
+
+This function checks the user's subscription, then generates short-lived signed URLs for the requested video's HLS files.
+
+```typescript
+// functions/src/index.ts (continued)
+
+import { getStorage } from "firebase-admin/storage";
+
+const storage = getStorage();
+const processedBucket = storage.bucket("your-processed-videos-bucket");
+
+export const getVideoAccess = functions.https.onCall(async (request) => {
+  if (!request.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "Must be logged in to watch."
+    );
+  }
+
+  const { videoId } = request.data as { videoId: string };
+
+  // Check subscription status
+  const userDoc = await firestore.doc(`users/${request.auth.uid}`).get();
+  const userData = userDoc.data();
+
+  if (
+    !userData?.subscription ||
+    userData.subscription.status !== "active" ||
+    userData.subscription.endDate.toDate() < new Date()
+  ) {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Active subscription required to watch videos."
+    );
+  }
+
+  // Determine max resolution based on plan
+  const plan = SUBSCRIPTION_PLANS[userData.subscription.planId];
+  const allowedResolutions = getAllowedResolutions(plan.maxResolution);
+
+  // Generate signed URL for master playlist
+  const masterPlaylistFile = processedBucket.file(
+    `${videoId}/master.m3u8`
+  );
+  const [masterExists] = await masterPlaylistFile.exists();
+
+  if (!masterExists) {
+    throw new functions.https.HttpsError("not-found", "Video not found.");
+  }
+
+  // Signed URLs expire in 4 hours — enough for a movie
+  const expiration = Date.now() + 4 * 60 * 60 * 1000;
+
+  const [masterUrl] = await masterPlaylistFile.getSignedUrl({
+    action: "read",
+    expires: expiration,
+  });
+
+  // Generate signed URLs for all segment files under this video
+  const [files] = await processedBucket.getFiles({
+    prefix: `${videoId}/`,
+  });
+
+  const signedUrls: Record<string, string> = {};
+  for (const file of files) {
+    // Filter by allowed resolutions
+    const filePath = file.name;
+    const shouldInclude = allowedResolutions.some(
+      (res) => filePath.includes(`/${res}/`) || filePath === `${videoId}/master.m3u8`
+    );
+
+    if (shouldInclude || filePath.endsWith("master.m3u8")) {
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: expiration,
+      });
+      // Map original path to signed URL for client-side resolution
+      signedUrls[filePath] = url;
+    }
+  }
+
+  return {
+    masterUrl,
+    signedUrls,
+    expiresAt: new Date(expiration).toISOString(),
+    maxResolution: plan.maxResolution,
+  };
+});
+
+function getAllowedResolutions(maxResolution: string): string[] {
+  const all = ["360p", "480p", "720p", "1080p", "4K"];
+  const maxIndex = all.indexOf(maxResolution);
+  if (maxIndex === -1) return all;
+  return all.slice(0, maxIndex + 1);
+}
+```
+
+### Web Client — Subscription Flow
+
+#### Payment Callback Page
+
+After Khalti redirects the user back, this page extracts the query parameters and verifies the payment:
+
+```tsx
+// app/payment/callback/page.tsx
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/firebase/firebase";
+
+export default function PaymentCallbackPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [status, setStatus] = useState<"verifying" | "success" | "failed">(
+    "verifying"
+  );
+  const [message, setMessage] = useState("Verifying your payment...");
+
+  useEffect(() => {
+    const pidx = searchParams.get("pidx");
+    const paymentStatus = searchParams.get("status");
+
+    if (!pidx) {
+      setStatus("failed");
+      setMessage("Invalid payment callback. Missing payment identifier.");
+      return;
+    }
+
+    // Even if Khalti says "Completed" in the URL, always verify server-side
+    const verifyPayment = httpsCallable(functions, "verifySubscriptionPayment");
+    verifyPayment({ pidx })
+      .then((result: any) => {
+        if (
+          result.data.status === "success" ||
+          result.data.status === "already_active"
+        ) {
+          setStatus("success");
+          setMessage(result.data.message);
+          // Redirect to home after 3 seconds
+          setTimeout(() => router.push("/"), 3000);
+        } else {
+          setStatus("failed");
+          setMessage(result.data.message);
+        }
+      })
+      .catch((error) => {
+        setStatus("failed");
+        setMessage(error.message || "Payment verification failed.");
+      });
+  }, [searchParams, router]);
+
+  return (
+    <div className="payment-callback">
+      {status === "verifying" && (
+        <div className="spinner">
+          <div className="loader" />
+          <p>{message}</p>
+        </div>
+      )}
+      {status === "success" && (
+        <div className="success">
+          <h2>✓ Payment Successful</h2>
+          <p>{message}</p>
+          <p>Redirecting to home...</p>
+        </div>
+      )}
+      {status === "failed" && (
+        <div className="error">
+          <h2>✗ Payment Failed</h2>
+          <p>{message}</p>
+          <button onClick={() => router.push("/subscribe")}>Try Again</button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+#### Subscription Plans Page
+
+```tsx
+// app/subscribe/page.tsx
+
+"use client";
+
+import { useState } from "react";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/firebase/firebase";
+import { useAuthState } from "react-firebase-hooks/auth";
+import { auth } from "@/firebase/firebase";
+
+const plans = [
+  {
+    id: "basic",
+    name: "Basic",
+    price: "रू 299",
+    period: "/month",
+    resolution: "720p",
+    streams: 1,
+    features: ["SD & HD streaming", "Watch on 1 device", "Cancel anytime"],
+  },
+  {
+    id: "standard",
+    name: "Standard",
+    price: "रू 599",
+    period: "/month",
+    resolution: "1080p",
+    streams: 2,
+    features: [
+      "Full HD streaming",
+      "Watch on 2 devices",
+      "Download for offline",
+      "Cancel anytime",
+    ],
+    popular: true,
+  },
+  {
+    id: "premium",
+    name: "Premium",
+    price: "रू 999",
+    period: "/month",
+    resolution: "4K + HDR",
+    streams: 4,
+    features: [
+      "4K + HDR streaming",
+      "Watch on 4 devices",
+      "Download for offline",
+      "Spatial Audio",
+      "Cancel anytime",
+    ],
+  },
+];
+
+export default function SubscribePage() {
+  const [user] = useAuthState(auth);
+  const [loading, setLoading] = useState<string | null>(null);
+
+  const handleSubscribe = async (planId: string) => {
+    if (!user) {
+      alert("Please sign in first.");
+      return;
+    }
+
+    setLoading(planId);
+
+    try {
+      const initiateSubscription = httpsCallable(
+        functions,
+        "initiateSubscription"
+      );
+      const result: any = await initiateSubscription({
+        planId,
+        phone: prompt("Enter your phone number for Khalti:") || "",
+      });
+
+      // Redirect to Khalti checkout
+      window.location.href = result.data.paymentUrl;
+    } catch (error: any) {
+      alert(error.message || "Failed to initiate payment.");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className="subscribe-page">
+      <h1>Choose Your Plan</h1>
+      <p>Watch unlimited movies and shows. Cancel anytime.</p>
+
+      <div className="plans-grid">
+        {plans.map((plan) => (
+          <div
+            key={plan.id}
+            className={`plan-card ${plan.popular ? "popular" : ""}`}
+          >
+            {plan.popular && <span className="badge">Most Popular</span>}
+            <h2>{plan.name}</h2>
+            <div className="price">
+              <span className="amount">{plan.price}</span>
+              <span className="period">{plan.period}</span>
+            </div>
+            <p className="resolution">Up to {plan.resolution}</p>
+            <p className="streams">{plan.streams} concurrent stream(s)</p>
+            <ul>
+              {plan.features.map((f) => (
+                <li key={f}>✓ {f}</li>
+              ))}
+            </ul>
+            <button
+              onClick={() => handleSubscribe(plan.id)}
+              disabled={loading === plan.id}
+            >
+              {loading === plan.id ? "Processing..." : "Pay with Khalti"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+#### Subscription Guard — Protect Video Pages
+
+Wrap the watch page with a guard that checks subscription status before loading the video player:
+
+```tsx
+// components/SubscriptionGuard.tsx
+
+"use client";
+
+import { useEffect, useState, ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/firebase/firebase";
+import { useAuthState } from "react-firebase-hooks/auth";
+import { auth } from "@/firebase/firebase";
+
+interface Props {
+  children: ReactNode;
+}
+
+export default function SubscriptionGuard({ children }: Props) {
+  const [user, authLoading] = useAuthState(auth);
+  const [hasAccess, setHasAccess] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const router = useRouter();
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const checkSubscription = async () => {
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      const data = userDoc.data();
+
+      if (
+        data?.subscription?.status === "active" &&
+        data?.subscription?.endDate?.toDate() > new Date()
+      ) {
+        setHasAccess(true);
+      } else {
+        router.push("/subscribe");
+      }
+      setChecking(false);
+    };
+
+    checkSubscription();
+  }, [user, authLoading, router]);
+
+  if (authLoading || checking) {
+    return <div className="loading">Checking access...</div>;
+  }
+
+  return hasAccess ? <>{children}</> : null;
+}
+```
+
+Use it in the watch page:
+
+```tsx
+// app/watch/page.tsx (modified)
+
+import SubscriptionGuard from "@/components/SubscriptionGuard";
+import VideoPlayer from "@/components/VideoPlayer";
+
+export default function WatchPage() {
+  return (
+    <SubscriptionGuard>
+      <VideoPlayer />
+    </SubscriptionGuard>
+  );
+}
+```
+
+### Video Player — Signed URL Integration
+
+The player needs to use signed URLs instead of public URLs. Since HLS playlists reference segment files by relative path, and signed URLs include query parameters, we need a custom loader:
+
+```tsx
+// components/VideoPlayer.tsx (Netflix version)
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/firebase/firebase";
+import Hls from "hls.js";
+
+export default function VideoPlayer() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const searchParams = useSearchParams();
+  const videoId = searchParams.get("v");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!videoId || !videoRef.current) return;
+
+    const loadVideo = async () => {
+      try {
+        // Request signed URLs from backend
+        const getAccess = httpsCallable(functions, "getVideoAccess");
+        const result: any = await getAccess({ videoId });
+
+        const { masterUrl, signedUrls } = result.data;
+
+        if (Hls.isSupported()) {
+          const hls = new Hls({
+            // Custom loader to rewrite segment URLs to signed versions
+            xhrSetup: (xhr, url) => {
+              // Find the matching signed URL for this segment
+              const matchingKey = Object.keys(signedUrls).find((key) =>
+                url.includes(key)
+              );
+              if (matchingKey) {
+                xhr.open("GET", signedUrls[matchingKey], true);
+              }
+            },
+          });
+
+          hls.loadSource(masterUrl);
+          hls.attachMedia(videoRef.current);
+
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            setLoading(false);
+          });
+
+          hls.on(Hls.Events.ERROR, (_, data) => {
+            if (data.fatal) {
+              setError("Failed to load video. Please try again.");
+            }
+          });
+
+          return () => hls.destroy();
+        } else if (
+          videoRef.current.canPlayType("application/vnd.apple.mpegurl")
+        ) {
+          // Safari native HLS — use master signed URL directly
+          videoRef.current.src = masterUrl;
+          setLoading(false);
+        }
+      } catch (err: any) {
+        setError(
+          err.message || "Access denied. Please check your subscription."
+        );
+        setLoading(false);
+      }
+    };
+
+    loadVideo();
+  }, [videoId]);
+
+  if (error) {
+    return <div className="video-error">{error}</div>;
+  }
+
+  return (
+    <div className="video-player-container">
+      {loading && <div className="video-loading">Loading video...</div>}
+      <video
+        ref={videoRef}
+        controls
+        className="video-player"
+        style={{ display: loading ? "none" : "block" }}
+      />
+    </div>
+  );
+}
+```
+
+### Subscription Expiry — Scheduled Cleanup
+
+Use a scheduled Cloud Function to expire subscriptions that have passed their end date:
+
+```typescript
+// functions/src/index.ts (continued)
+
+export const checkExpiredSubscriptions = functions.pubsub
+  .schedule("every 1 hours")
+  .onRun(async () => {
+    const now = Timestamp.now();
+
+    // Find users with active subscriptions that have passed their end date
+    const expiredQuery = await firestore
+      .collection("users")
+      .where("subscription.status", "==", "active")
+      .where("subscription.endDate", "<", now)
+      .get();
+
+    const batch = firestore.batch();
+    let count = 0;
+
+    for (const doc of expiredQuery.docs) {
+      batch.update(doc.ref, {
+        "subscription.status": "expired",
+      });
+
+      // Update subscription history
+      const historyQuery = await firestore
+        .collection("subscriptionHistory")
+        .where("userId", "==", doc.id)
+        .where("status", "==", "active")
+        .get();
+
+      for (const historyDoc of historyQuery.docs) {
+        batch.update(historyDoc.ref, { status: "expired" });
+      }
+
+      count++;
+    }
+
+    if (count > 0) {
+      await batch.commit();
+      console.log(`Expired ${count} subscriptions.`);
+    }
+  });
+```
+
+### Khalti Sandbox Testing
+
+For development, use Khalti's sandbox environment with these test credentials:
+
+| Field | Value |
+| --- | --- |
+| **Sandbox URL** | `https://dev.khalti.com/api/v2/` |
+| **Test Khalti IDs** | `9800000000` through `9800000005` |
+| **Login OTP** | `987654` |
+| **MPIN** | `1111` |
+
+Register for a sandbox merchant account at [Khalti's developer portal](https://dev.khalti.com/) to get your test secret key.
+
+### Payment Flow — End to End
+
+```
+User selects plan → Frontend calls initiateSubscription() →
+  → Cloud Function creates Firestore payment record
+  → Cloud Function POSTs to Khalti /epayment/initiate/
+  → Khalti returns { pidx, payment_url }
+  → Cloud Function returns payment_url to frontend
+
+Frontend redirects user to payment_url →
+  → User completes payment on Khalti's checkout page
+  → Khalti redirects user to return_url with ?pidx=...&status=Completed
+
+Frontend (callback page) calls verifySubscriptionPayment({ pidx }) →
+  → Cloud Function POSTs to Khalti /epayment/lookup/
+  → Khalti returns { status: "Completed", transaction_id }
+  → Cloud Function verifies amount matches
+  → Cloud Function activates subscription in Firestore (batch write)
+  → Returns success to frontend
+
+User requests video → Frontend calls getVideoAccess({ videoId }) →
+  → Cloud Function checks subscription.status === "active"
+  → Cloud Function checks subscription.endDate > now
+  → Cloud Function checks plan's maxResolution
+  → Cloud Function generates signed URLs (4-hour expiry)
+  → Returns signed URLs to frontend
+
+Frontend loads HLS player with signed URLs →
+  → Custom XHR loader rewrites segment requests to signed URLs
+  → Video plays (private bucket, no public access)
+```
+
+### Security Considerations
+
+1. **Server-side verification is mandatory.** Never trust the `status` query parameter from Khalti's redirect. Always call `/epayment/lookup/` from your backend.
+
+2. **Amount validation.** After verification, compare `verification.total_amount` against your Firestore payment record. This prevents users from paying a lower amount through request manipulation.
+
+3. **Idempotent verification.** The `verifySubscriptionPayment` function checks if the payment is already completed before processing. This handles duplicate callbacks safely.
+
+4. **Signed URL expiration.** URLs expire after 4 hours. For long movies, consider refreshing URLs mid-playback via a heartbeat mechanism.
+
+5. **Concurrent stream limiting.** Track active sessions in Firestore (keyed by user ID + device fingerprint). Before generating signed URLs, check that the user hasn't exceeded their plan's `maxConcurrentStreams`.
+
+6. **Secret key rotation.** Store the Khalti secret key in Firebase secrets (not environment variables or code). Rotate keys periodically via the Khalti merchant dashboard.
