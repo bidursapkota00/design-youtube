@@ -1,6 +1,8 @@
-# Design YouTube — Full Stack & System Design Guide
+# Design YouTube: Full Stack & System Design Guide
 
 ![Bidur Sapkota](https://www.bidursapkota.com.np/images/gravatar.webp "Bidur Sapkota - Developer")&nbsp;[Bidur Sapkota](https://www.bidursapkota.com.np/)
+
+![Design YouTube: Full Stack & System Design Guide by Bidur Sapkota](youtube-1200.webp "Design YouTube: Full Stack & System Design Guide – Blog by Bidur Sapkota")
 
 ## Table of Contents
 
