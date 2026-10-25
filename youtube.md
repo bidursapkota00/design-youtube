@@ -7,24 +7,24 @@
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
-2. [Video Processing Service — Setup](#video-processing-service--setup)
-3. [Video Processing Service — FFmpeg Integration](#video-processing-service--ffmpeg-integration)
+2. [Video Processing Service: Setup](#video-processing-service--setup)
+3. [Video Processing Service: FFmpeg Integration](#video-processing-service--ffmpeg-integration)
 4. [Dockerizing the Video Processing Service](#dockerizing-the-video-processing-service)
 5. [Google Cloud Storage Integration](#google-cloud-storage-integration)
 6. [Cloud Pub/Sub Message Handling](#cloud-pubsub-message-handling)
 7. [Google Cloud Deployment](#google-cloud-deployment)
-8. [Web Client — Next.js Setup](#web-client--nextjs-setup)
+8. [Web Client: Next.js Setup](#web-client--nextjs-setup)
 9. [Firebase Authentication](#firebase-authentication)
-10. [Firebase Cloud Functions — API Service](#firebase-cloud-functions--api-service)
+10. [Firebase Cloud Functions: API Service](#firebase-cloud-functions--api-service)
 11. [Signed Upload URLs & CORS](#signed-upload-urls--cors)
 12. [Upload Component](#upload-component)
-13. [Firestore — Video Metadata](#firestore--video-metadata)
+13. [Firestore: Video Metadata](#firestore--video-metadata)
 14. [Video Listing & Playback](#video-listing--playback)
 15. [Deploying the Web Client](#deploying-the-web-client)
-16. [Adaptive Streaming — HLS with M3U8](#adaptive-streaming--hls-with-m3u8)
+16. [Adaptive Streaming: HLS with M3U8](#adaptive-streaming--hls-with-m3u8)
 17. [Content Delivery Network (CDN)](#content-delivery-network-cdn)
-18. [Design Netflix — Subscription-Based Streaming with Khalti Payment Gateway](#design-netflix--subscription-based-streaming-with-khalti-payment-gateway)
-19. [Design Udemy — Per-Course Purchase with Khalti Payment Gateway](#design-udemy--per-course-purchase-with-khalti-payment-gateway)
+18. [Design Netflix: Subscription-Based Streaming with Khalti Payment Gateway](#design-netflix--subscription-based-streaming-with-khalti-payment-gateway)
+19. [Design Udemy: Per-Course Purchase with Khalti Payment Gateway](#design-udemy--per-course-purchase-with-khalti-payment-gateway)
 
 ---
 
@@ -32,15 +32,15 @@
 
 This project builds a simplified YouTube clone using Google Cloud services. The system consists of three main components that work together:
 
-- **Video Processing Service** — A Node.js/Express server that downloads raw videos from Cloud Storage, transcodes them to 360p using FFmpeg, and uploads the processed output. Runs as a Docker container on Cloud Run.
-- **YouTube API Service** — Firebase Cloud Functions that handle user creation (Firestore), signed upload URL generation (Cloud Storage), and video listing.
-- **YouTube Web Client** — A Next.js frontend that provides Google sign-in, video upload via signed URLs, a video listing homepage, and a watch page.
+- **Video Processing Service** is a Node.js/Express server that downloads raw videos from Cloud Storage, transcodes them to 360p using FFmpeg, and uploads the processed output. Runs as a Docker container on Cloud Run.
+- **YouTube API Service** is Firebase Cloud Functions that handle user creation (Firestore), signed upload URL generation (Cloud Storage), and video listing.
+- **YouTube Web Client** is a Next.js frontend that provides Google sign-in, video upload via signed URLs, a video listing homepage, and a watch page.
 
 Cloud Pub/Sub connects Cloud Storage to the processing service: when a raw video is uploaded, a notification triggers the processing pipeline automatically.
 
 ---
 
-## Video Processing Service — Setup
+## Video Processing Service: Setup
 
 ### Initialize the Project
 
@@ -84,7 +84,7 @@ node_modules
 }
 ```
 
-`target` sets the JavaScript version to compile to. `module` and `moduleResolution` are set to `NodeNext` to use native ES modules, matching the `"type": "module"` in `package.json`. `strict` enables all strict type-checking options. `verbatimModuleSyntax` ensures all type imports use `import type` syntax — this is required for Node.js 24's type stripping, which erases types without transforming module syntax. `esModuleInterop` allows default imports from CommonJS modules like Express.
+`target` sets the JavaScript version to compile to. `module` and `moduleResolution` are set to `NodeNext` to use native ES modules, matching the `"type": "module"` in `package.json`. `strict` enables all strict type-checking options. `verbatimModuleSyntax` ensures all type imports use `import type` syntax. This is required for Node.js 24's type stripping, which erases types without transforming module syntax. `esModuleInterop` allows default imports from CommonJS modules like Express.
 
 ### Update `package.json` Scripts
 
@@ -112,9 +112,9 @@ node_modules
 }
 ```
 
-`"type": "module"` enables ES module syntax (`import`/`export`) natively. `start` uses `node --watch` to run TypeScript directly — Node.js 24 strips types at startup without any additional tooling, and `--watch` restarts the process on file changes (replacing `nodemon` + `ts-node`). `build` compiles TypeScript to JavaScript for production. `serve` runs the compiled output.
+`"type": "module"` enables ES module syntax (`import`/`export`) natively. `start` uses `node --watch` to run TypeScript directly. Node.js 24 strips types at startup without any additional tooling, and `--watch` restarts the process on file changes (replacing `nodemon` + `ts-node`). `build` compiles TypeScript to JavaScript for production. `serve` runs the compiled output.
 
-### Create `src/index.ts` — Basic Server
+### Create `src/index.ts`: Basic Server
 
 ```typescript
 import express from "express";
@@ -135,7 +135,7 @@ Run with `npm start` and visit `http://localhost:3000` to confirm the server is 
 
 ---
 
-## Video Processing Service — FFmpeg Integration
+## Video Processing Service: FFmpeg Integration
 
 ### Install FFmpeg Dependencies
 
@@ -160,7 +160,7 @@ sudo apt-get update && sudo apt-get install -y ffmpeg
 brew install ffmpeg
 ```
 
-### Update `src/index.ts` — Process Video Endpoint
+### Update `src/index.ts`: Process Video Endpoint
 
 ```typescript
 import express from "express";
@@ -223,7 +223,7 @@ Status: 200 OK
 node_modules
 ```
 
-### Create `Dockerfile` — Multi-Stage Build
+### Create `Dockerfile`: Multi-Stage Build
 
 ```dockerfile
 # Stage 1: Build stage
@@ -271,7 +271,7 @@ CMD [ "npm", "run", "serve" ]
 
 Stage 1 (`builder`) installs all dependencies including dev dependencies, compiles TypeScript to JavaScript, and produces the `dist/` folder. Stage 2 starts fresh with `node:24`, installs FFmpeg and only production dependencies, then copies the compiled output from the builder stage. This keeps the final image small by excluding TypeScript, type definitions, and build tools. Although Node.js 24 can run `.ts` files directly, production still uses compiled output for faster startup and to catch type errors at build time.
 
-### Create `Dockerfile.dev` — Single-Stage Development Build
+### Create `Dockerfile.dev`: Single-Stage Development Build
 
 The multi-stage Dockerfile above is optimized for production. During development, you want hot reload so that code changes reflect immediately without rebuilding the image. Node.js 24 has built-in `--watch` mode and native TypeScript support, so no extra dependencies like `nodemon` or `ts-node` are needed:
 
@@ -287,7 +287,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-# Source code is mounted via volume — no COPY needed
+# Source code is mounted via volume: no COPY needed
 # COPY . .  ← intentionally omitted
 
 EXPOSE 3000
@@ -302,11 +302,11 @@ Build and run with a volume mount so your local `src/` is live-synced into the c
 # Build the dev image
 docker build -f Dockerfile.dev -t video-processing-service-dev .
 
-# Run with volume mount — edits to src/ on your host reflect instantly
+# Run with volume mount: edits to src/ on your host reflect instantly
 docker run -p 3000:3000 -v $(pwd)/src:/app/src -d video-processing-service-dev
 ```
 
-`-f Dockerfile.dev` tells Docker to use the development Dockerfile instead of the default. `-v $(pwd)/src:/app/src` mounts your local `src/` directory into the container. Node.js 24's `--watch` flag monitors the file tree and restarts the process on changes — combined with native type stripping, this replaces both `nodemon` and `ts-node` with zero extra dependencies.
+`-f Dockerfile.dev` tells Docker to use the development Dockerfile instead of the default. `-v $(pwd)/src:/app/src` mounts your local `src/` directory into the container. Node.js 24's `--watch` flag monitors the file tree and restarts the process on changes. Combined with native type stripping, this replaces both `nodemon` and `ts-node` with zero extra dependencies.
 
 ### Build & Run
 
@@ -505,7 +505,7 @@ function ensureDirectoryExistence(dirPath: string) {
 
 ## Cloud Pub/Sub Message Handling
 
-### Update `src/index.ts` — Full Processing Pipeline
+### Update `src/index.ts`: Full Processing Pipeline
 
 When a video is uploaded to the raw videos bucket, Cloud Pub/Sub sends a notification to the `/process-video` endpoint. The message body contains a base64-encoded JSON payload with the filename.
 
@@ -697,7 +697,7 @@ gsutil mb -l us-central1 gs://codeyalaya-yt-processed-videos
 
 ---
 
-## Web Client — Next.js Setup
+## Web Client: Next.js Setup
 
 ### Initialize Next.js Project
 
@@ -917,7 +917,7 @@ The component conditionally renders Sign Out or Sign In based on whether a `user
 }
 ```
 
-### Update `src/ui/navbar/navbar.tsx` — Add Auth State
+### Update `src/ui/navbar/navbar.tsx`: Add Auth State
 
 ```tsx
 "use client";
@@ -964,7 +964,7 @@ export default function Navbar() {
 
 ---
 
-## Firebase Cloud Functions — API Service
+## Firebase Cloud Functions: API Service
 
 ### Set Up Firebase Functions
 
@@ -998,7 +998,7 @@ npm run serve
 
 Visit `http://127.0.0.1:5001/<PROJECT_ID>/us-central1/helloWorld` to confirm the function is running. The Firebase Emulator Suite UI is available at `http://localhost:4000`.
 
-### Create `functions/src/index.ts` — createUser Function
+### Create `functions/src/index.ts`: createUser Function
 
 ```typescript
 import { onCall } from "firebase-functions/v2/https";
@@ -1304,7 +1304,7 @@ The hidden `<input>` element is triggered by clicking the styled `<label>`. `acc
 
 ---
 
-## Firestore — Video Metadata
+## Firestore: Video Metadata
 
 ### Install Firebase Admin in the Video Processing Service
 
@@ -1366,7 +1366,7 @@ export async function isVideoNew(videoId: string) {
 
 `credential.applicationDefault()` authenticates using the default service account when running on Google Cloud. `getFirestore("codeyalaya")` connects to the named Firestore database. `setVideo` uses `{ merge: true }` so it updates only the specified fields without overwriting existing data. `isVideoNew` checks if the video has been processed before to prevent duplicate processing.
 
-### Update `src/index.ts` — Add Firestore Integration
+### Update `src/index.ts`: Add Firestore Integration
 
 ```typescript
 import express from "express";
@@ -1528,7 +1528,7 @@ Status: 200 OK
 }
 ```
 
-### Update `src/app/page.tsx` — Video Listing
+### Update `src/app/page.tsx`: Video Listing
 
 ```tsx
 import styles from "./page.module.css";
@@ -1711,7 +1711,7 @@ gcloud run deploy yt-web-client \
   --max-instances=1
 ```
 
-When prompted: `Allow unauthenticated invocations to [yt-web-client] (y/N)?` — answer **y**
+When prompted: `Allow unauthenticated invocations to [yt-web-client] (y/N)?`. Answer **y**
 
 After deployment, you get a service URL (e.g., `https://yt-web-client-v6j6pvk7fq-uc.a.run.app`).
 
@@ -1724,13 +1724,13 @@ This allows Firebase Authentication to work from the deployed domain. Without th
 
 ---
 
-## Adaptive Streaming — HLS with M3U8
+## Adaptive Streaming: HLS with M3U8
 
 The previous sections serve a single 360p MP4 file per video. Real streaming platforms use **HTTP Live Streaming (HLS)** to deliver multiple quality levels and let the player switch automatically based on network conditions. This section replaces the single-file approach with a full adaptive bitrate pipeline: the processing service transcodes each upload into 360p, 480p, and 720p HLS streams, generates a master M3U8 playlist, uploads everything to Cloud Storage, and the web client uses HLS.js to play it with quality switching.
 
 ### How HLS Works
 
-HLS splits a video into small `.ts` (Transport Stream) segments — typically 6–10 seconds each. A **variant playlist** (`.m3u8`) for each quality level lists its segments. A **master playlist** references all variant playlists and declares their resolution/bandwidth so the player can choose the right one.
+HLS splits a video into small `.ts` (Transport Stream) segments, typically 6–10 seconds each. A **variant playlist** (`.m3u8`) for each quality level lists its segments. A **master playlist** references all variant playlists and declares their resolution/bandwidth so the player can choose the right one.
 
 ```text
 master.m3u8
@@ -1741,7 +1741,7 @@ master.m3u8
 
 The player starts with the quality that matches current bandwidth. If the network degrades mid-stream, it drops to a lower variant without rebuffering. If bandwidth improves, it steps up seamlessly.
 
-### Update `src/storage.ts` — Multi-Resolution HLS Transcoding
+### Update `src/storage.ts`: Multi-Resolution HLS Transcoding
 
 Replace the `convertVideo` function (or add alongside it) and add helpers for HLS output:
 
@@ -2045,9 +2045,9 @@ function ensureDirectoryExistence(dirPath: string) {
 - `HLS_VARIANTS` defines the three quality levels with their encoding parameters. `videoBitrate` controls file size, `maxrate`/`bufsize` enforce CBR-like behavior for smoother streaming, and `bandwidth` is written into the master playlist so the player knows how much throughput each variant needs.
 - `transcodeVariant` uses FFmpeg's built-in HLS muxer (`-f hls`). `-hls_time 6` creates 6-second segments. `-hls_playlist_type vod` writes the `#EXT-X-ENDLIST` tag so the player knows the stream is complete. `-scale=-2:height` keeps the width even (required by libx264) while preserving aspect ratio.
 - `generateMasterPlaylist` writes the `#EXT-X-STREAM-INF` entries that tell the player what variants are available. Resolutions are calculated assuming 16:9, but the actual scaling in FFmpeg handles any aspect ratio.
-- `uploadHlsOutput` walks the directory recursively and sets the correct `Content-Type` — `application/vnd.apple.mpegurl` for `.m3u8` files and `video/mp2t` for `.ts` segments. Without correct MIME types, some browsers and players will refuse to load the streams.
+- `uploadHlsOutput` walks the directory recursively and sets the correct `Content-Type`. `application/vnd.apple.mpegurl` for `.m3u8` files and `video/mp2t` for `.ts` segments. Without correct MIME types, some browsers and players will refuse to load the streams.
 
-### Update `src/index.ts` — HLS Processing Pipeline
+### Update `src/index.ts`: HLS Processing Pipeline
 
 Replace the processing endpoint to use the HLS pipeline:
 
@@ -2169,7 +2169,7 @@ gcloud storage buckets update gs://codeyalaya-yt-processed-videos \
 
 The `Range` header is exposed because HLS.js uses range requests for efficient segment fetching. Without CORS on the processed bucket, the browser blocks the player from loading segments cross-origin.
 
-### Update the Dockerfile — Increase Resources
+### Update the Dockerfile: Increase Resources
 
 Transcoding three variants is more CPU- and memory-intensive. Update the Cloud Run deployment:
 
@@ -2186,9 +2186,9 @@ gcloud run deploy video-processing-service \
   --ingress=internal
 ```
 
-`--memory=4Gi` and `--cpu=2` give FFmpeg more headroom for parallel encoding. The Dockerfile itself does not change — only the Cloud Run resource allocation.
+`--memory=4Gi` and `--cpu=2` give FFmpeg more headroom for parallel encoding. The Dockerfile itself does not change, only the Cloud Run resource allocation.
 
-### Web Client — Install HLS.js
+### Web Client: Install HLS.js
 
 HLS.js is a JavaScript library that implements the HLS protocol in the browser. Safari supports HLS natively, but Chrome, Firefox, and Edge require HLS.js.
 
@@ -2197,7 +2197,7 @@ cd youtube-webclient
 npm install hls.js
 ```
 
-### Create `src/app/watch/hls-player.tsx` — Adaptive Video Player
+### Create `src/app/watch/hls-player.tsx`: Adaptive Video Player
 
 ```tsx
 "use client";
@@ -2304,9 +2304,9 @@ export default function HlsPlayer({ src }: HlsPlayerProps) {
 
 **How this works:**
 
-- `Hls.isSupported()` checks for MediaSource Extensions (MSE) support — available in Chrome, Firefox, and Edge. Safari uses native HLS and skips HLS.js entirely.
+- `Hls.isSupported()` checks for MediaSource Extensions (MSE) support, available in Chrome, Firefox, and Edge. Safari uses native HLS and skips HLS.js entirely.
 - `startLevel: -1` tells HLS.js to pick the initial quality automatically based on estimated bandwidth.
-- `capLevelToPlayerSize: true` prevents loading 720p if the `<video>` element is only 360px tall — saves bandwidth.
+- `capLevelToPlayerSize: true` prevents loading 720p if the `<video>` element is only 360px tall, saves bandwidth.
 - `MANIFEST_PARSED` fires after HLS.js parses the master playlist and knows all available quality levels. The levels are stored in state for the quality selector UI.
 - `LEVEL_SWITCHED` fires when HLS.js switches quality (either automatically or manually), keeping the UI in sync.
 - `handleQualityChange(-1)` re-enables automatic bitrate adaptation. Setting `currentLevel` to a specific index locks the player to that quality.
@@ -2371,7 +2371,7 @@ export default function HlsPlayer({ src }: HlsPlayerProps) {
 }
 ```
 
-### Update `src/app/watch/page.tsx` — Use the HLS Player
+### Update `src/app/watch/page.tsx`: Use the HLS Player
 
 ```tsx
 "use client";
@@ -2413,13 +2413,13 @@ export default function Watch() {
 }
 ```
 
-The only change from the original watch page is replacing the plain `<video>` element with the `<HlsPlayer>` component. The `src` is now `<prefix>/<videoId>/master.m3u8` (set by the processing service in Firestore). Everything else — the Suspense boundary, search params, and layout — stays the same.
+The only change from the original watch page is replacing the plain `<video>` element with the `<HlsPlayer>` component. The `src` is now `<prefix>/<videoId>/master.m3u8` (set by the processing service in Firestore). Everything else (the Suspense boundary, search params, and layout) stays the same.
 
 ### Test the Full Pipeline
 
 1. **Upload a video** through the web client's Upload button
 2. **Cloud Storage to Pub/Sub to Cloud Run** triggers the processing service
-3. **Check Cloud Run logs** — you should see transcoding messages for each variant:
+3. **Check Cloud Run logs**: you should see transcoding messages for each variant:
    ```text
    Transcoding 360p finished.
    Transcoding 480p finished.
@@ -2427,7 +2427,7 @@ The only change from the original watch page is replacing the plain `<video>` el
    Master playlist generated.
    HLS output for <videoId> uploaded and made public.
    ```
-4. **Verify Cloud Storage** — the processed bucket should contain:
+4. **Verify Cloud Storage**: the processed bucket should contain:
    ```text
    <videoId>/master.m3u8
    <videoId>/360p/playlist.m3u8
@@ -2441,17 +2441,17 @@ The only change from the original watch page is replacing the plain `<video>` el
    <videoId>/720p/segment000.ts
    ...
    ```
-5. **Open the watch page** — the HLS player should load and show quality buttons (Auto, 360p, 480p, 720p)
-6. **Test quality switching** — click different quality buttons and observe the resolution change. Open browser DevTools, go to the Network tab, to see `.ts` segment requests switch between variants.
-7. **Test auto mode** — click Auto, then throttle the network in DevTools (Network tab, select Slow 3G). The player should drop to 360p. Remove throttling and it should climb back to 720p.
+5. **Open the watch page**: the HLS player should load and show quality buttons (Auto, 360p, 480p, 720p)
+6. **Test quality switching**: click different quality buttons and observe the resolution change. Open browser DevTools, go to the Network tab, to see `.ts` segment requests switch between variants.
+7. **Test auto mode**: click Auto, then throttle the network in DevTools (Network tab, select Slow 3G). The player should drop to 360p. Remove throttling and it should climb back to 720p.
 
 ---
 
 ## Content Delivery Network (CDN)
 
-Up to this point, every viewer fetches `.m3u8` playlists and `.ts` segments directly from the Cloud Storage bucket in `us-central1`. A user in Tokyo or São Paulo makes a round trip to that single region for every segment — adding latency, increasing buffering, and concentrating all egress costs on one location. A **Content Delivery Network** caches content at edge nodes worldwide so subsequent requests are served from the nearest point of presence (PoP).
+Up to this point, every viewer fetches `.m3u8` playlists and `.ts` segments directly from the Cloud Storage bucket in `us-central1`. A user in Tokyo or São Paulo makes a round trip to that single region for every segment, adding latency, increasing buffering, and concentrating all egress costs on one location. A **Content Delivery Network** caches content at edge nodes worldwide so subsequent requests are served from the nearest point of presence (PoP).
 
-Google Cloud CDN integrates with Cloud Storage through an **external Application Load Balancer** with a **backend bucket**. Once enabled, the first request for a segment hits the origin (Cloud Storage), and the response is cached at the edge. All following requests for that segment from nearby users are served directly from the edge cache — typically in single-digit milliseconds.
+Google Cloud CDN integrates with Cloud Storage through an **external Application Load Balancer** with a **backend bucket**. Once enabled, the first request for a segment hits the origin (Cloud Storage), and the response is cached at the edge. All following requests for that segment from nearby users are served directly from the edge cache, typically in single-digit milliseconds.
 
 ### How CDN Fits the Architecture
 
@@ -2547,7 +2547,7 @@ gcloud compute forwarding-rules create cdn-video-https-rule \
 If you don't have a custom domain yet, you can use HTTP for testing:
 
 ```bash
-# HTTP-only (testing only — not for production)
+# HTTP-only (testing only: not for production)
 gcloud compute target-http-proxies create cdn-video-http-proxy \
   --url-map=cdn-video-url-map
 
@@ -2599,11 +2599,11 @@ export async function uploadHlsOutput(
 
         if (entry.name.endsWith(".m3u8")) {
           contentType = "application/vnd.apple.mpegurl";
-          // Playlists are small and should be fresh — short cache
+          // Playlists are small and should be fresh, short cache
           cacheControl = "public, max-age=60, s-maxage=300";
         } else if (entry.name.endsWith(".ts")) {
           contentType = "video/mp2t";
-          // Segments are immutable once written — long cache
+          // Segments are immutable once written, long cache
           cacheControl = "public, max-age=604800, immutable";
         }
 
@@ -2629,11 +2629,11 @@ export async function uploadHlsOutput(
 
 **Cache strategy explained:**
 
-- **`.m3u8` playlists** — `max-age=60, s-maxage=300`. The browser caches for 1 minute, the CDN edge caches for 5 minutes. For VOD this is conservative; you could increase these values. The separation between `max-age` (browser) and `s-maxage` (CDN/proxy) lets you invalidate at the edge without waiting for browser caches to expire.
-- **`.ts` segments** — `max-age=604800, immutable`. Segments never change once written (their content is determined by the segment filename). `immutable` tells the browser to skip revalidation entirely. 7-day cache means segments stay at the edge for a full week, dramatically reducing origin egress.
+- **`.m3u8` playlists**: `max-age=60, s-maxage=300`. The browser caches for 1 minute, the CDN edge caches for 5 minutes. For VOD this is conservative; you could increase these values. The separation between `max-age` (browser) and `s-maxage` (CDN/proxy) lets you invalidate at the edge without waiting for browser caches to expire.
+- **`.ts` segments**: `max-age=604800, immutable`. Segments never change once written (their content is determined by the segment filename). `immutable` tells the browser to skip revalidation entirely. 7-day cache means segments stay at the edge for a full week, dramatically reducing origin egress.
 - The `public` directive is required for CDN caching. Without it, shared caches (CDN edge nodes) may not store the response.
 
-### Update the Web Client — CDN URL
+### Update the Web Client: CDN URL
 
 Update the video prefix in the watch page and anywhere else that references the processed videos bucket. Replace the raw Cloud Storage URL with your CDN domain:
 
@@ -2642,14 +2642,14 @@ Update the video prefix in the watch page and anywhere else that references the 
 const videoPrefix =
   "https://storage.googleapis.com/codeyalaya-yt-processed-videos/";
 
-// After (CDN — custom domain)
+// After (CDN, custom domain)
 const videoPrefix = "https://cdn.yourdomain.com/";
 
-// After (CDN — IP-based, HTTP only, for testing)
+// After (CDN. IP-based, HTTP only, for testing)
 // const videoPrefix = "http://<STATIC_IP_ADDRESS>/";
 ```
 
-The path structure stays the same (`<videoId>/master.m3u8`). The CDN transparently proxies to Cloud Storage — no changes to HLS.js, the quality selector, or any other client code.
+The path structure stays the same (`<videoId>/master.m3u8`). The CDN transparently proxies to Cloud Storage, no changes to HLS.js, the quality selector, or any other client code.
 
 ### Update CORS for the CDN Origin
 
@@ -2694,7 +2694,7 @@ gcloud compute url-maps invalidate-cdn-cache cdn-video-url-map \
   --path="/*"
 ```
 
-Invalidation is asynchronous and typically completes within a few minutes globally. It does not delete the content from Cloud Storage — it only removes it from edge caches so the next request fetches a fresh copy from the origin.
+Invalidation is asynchronous and typically completes within a few minutes globally. It does not delete the content from Cloud Storage, it only removes it from edge caches so the next request fetches a fresh copy from the origin.
 
 **Best practice:** Instead of invalidating, use unique filenames. Since segment filenames already contain the video ID and a sequential number, reprocessing a video with a new video ID naturally avoids cache conflicts. Reserve invalidation for cases where you must update content at the same path.
 
@@ -2710,10 +2710,10 @@ gcloud compute backend-buckets describe processed-videos-backend \
 
 In the Cloud Console, open **Network services**, click **Cloud CDN**, select your backend, and view metrics:
 
-- **Cache hit ratio** — Percentage of requests served from edge cache. For a video platform with repeat viewers, expect 80–95%+ after warmup.
-- **Bandwidth** — Total bytes served, split by cache hit vs. origin fetch.
-- **Latency** — Response times broken down by region. Edge-served responses should be under 50ms.
-- **Request count** — Total requests by status code. Watch for 404s (missing segments) and 403s (CORS/permissions issues).
+- **Cache hit ratio** is percentage of requests served from edge cache. For a video platform with repeat viewers, expect 80–95%+ after warmup.
+- **Bandwidth** is total bytes served, split by cache hit vs. origin fetch.
+- **Latency** is response times broken down by region. Edge-served responses should be under 50ms.
+- **Request count** is total requests by status code. Watch for 404s (missing segments) and 403s (CORS/permissions issues).
 
 You can also check cache behavior from the command line:
 
@@ -2724,10 +2724,10 @@ curl -sI "https://cdn.yourdomain.com/<videoId>/360p/segment000.ts" | grep -i -E 
 
 Look for:
 
-- `Age: <seconds>` — How long the response has been in the edge cache. If present, the request was a cache hit.
-- `X-Goog-Hash` — Confirms the response came from Cloud Storage (via CDN).
-- `Cache-Control: public, max-age=604800, immutable` — Confirms your caching headers are being forwarded.
-- `Via: 1.1 google` — Confirms the response was proxied through Google's infrastructure.
+- `Age: <seconds>`. How long the response has been in the edge cache. If present, the request was a cache hit.
+- `X-Goog-Hash`. Confirms the response came from Cloud Storage (via CDN).
+- `Cache-Control: public, max-age=604800, immutable`. Confirms your caching headers are being forwarded.
+- `Via: 1.1 google`. Confirms the response was proxied through Google's infrastructure.
 
 ### Cost Considerations
 
@@ -2742,13 +2742,13 @@ CDN adds a caching layer but changes the cost structure:
 | **HTTP/HTTPS requests**         | Cloud Storage operations pricing | CDN request pricing                   |
 | **Cache invalidation**          | N/A                              | Free (up to limits; throttled beyond) |
 
-CDN egress is generally **cheaper per GB** than direct Cloud Storage egress, and the cache hit ratio means most bytes are served from edge — reducing total origin egress significantly. For a video platform, the savings compound because popular videos are requested thousands of times but only fetched from origin once per edge per TTL.
+CDN egress is generally **cheaper per GB** than direct Cloud Storage egress, and the cache hit ratio means most bytes are served from edge, reducing total origin egress significantly. For a video platform, the savings compound because popular videos are requested thousands of times but only fetched from origin once per edge per TTL.
 
 **Estimated savings example:** A 5-minute 720p video is ~100MB. With 10,000 views and a 90% cache hit ratio, only 1,000 requests hit the origin (100GB egress) instead of 10,000 (1TB egress). At GCP's standard egress pricing, that's roughly $85 saved per video.
 
 ---
 
-## Design Netflix — Subscription-Based Streaming with Khalti Payment Gateway
+## Design Netflix: Subscription-Based Streaming with Khalti Payment Gateway
 
 This section extends the YouTube architecture into a Netflix-like system where videos are **private by default** and only accessible to users with an active subscription. Instead of `file.makePublic()`, we serve videos through **signed URLs** generated on demand after verifying the user's subscription status. Payments are handled through **Khalti**, Nepal's payment gateway, using their ePayment v2 API.
 
@@ -2756,7 +2756,7 @@ This section extends the YouTube architecture into a Netflix-like system where v
 
 | Aspect             | YouTube (Public)                      | Netflix (Subscription)                          |
 | ------------------ | ------------------------------------- | ----------------------------------------------- |
-| **Video access**   | `file.makePublic()` — anyone can view | Private bucket — signed URLs only               |
+| **Video access**   | `file.makePublic()`, anyone can view | Private bucket, signed URLs only               |
 | **Authentication** | Optional for viewing                  | Required for all video access                   |
 | **Authorization**  | None                                  | Subscription tier check before serving          |
 | **Payment**        | None                                  | Khalti ePayment integration                     |
@@ -2879,7 +2879,7 @@ subscriptionHistory/{historyId}
 └── status: "active" | "expired" | "cancelled"
 ```
 
-### Khalti Payment Gateway — Integration
+### Khalti Payment Gateway: Integration
 
 Khalti's ePayment v2 API uses a server-to-server flow: **Initiate, Redirect, then Verify**. Your backend initiates the payment, Khalti handles the checkout UI, and your backend verifies the result. The user never sees your secret key.
 
@@ -2910,7 +2910,7 @@ firebase functions:secrets:set KHALTI_ENV
 firebase functions:secrets:set WEBSITE_URL
 ```
 
-#### Khalti Service — Initiate & Verify
+#### Khalti Service: Initiate & Verify
 
 ```typescript
 // functions/src/services/khaltiService.ts
@@ -2990,7 +2990,7 @@ export async function verifyKhaltiPayment(
 }
 ```
 
-### Cloud Functions — Payment Endpoints
+### Cloud Functions: Payment Endpoints
 
 #### Initiate Subscription Payment
 
@@ -3063,7 +3063,7 @@ export const initiateSubscription = functions.https.onCall(async (request) => {
     completedAt: null,
     metadata: {
       purchaseOrderId,
-      purchaseOrderName: `${plan.name} Plan — ${plan.durationDays} Days`,
+      purchaseOrderName: `${plan.name} Plan, ${plan.durationDays} Days`,
     },
   });
 
@@ -3072,7 +3072,7 @@ export const initiateSubscription = functions.https.onCall(async (request) => {
     const khaltiResponse = await initiateKhaltiPayment({
       amount: plan.pricePaisa,
       purchaseOrderId,
-      purchaseOrderName: `${plan.name} Plan — ${plan.durationDays} Days`,
+      purchaseOrderName: `${plan.name} Plan, ${plan.durationDays} Days`,
       customerName: request.auth.token.name || "User",
       customerEmail: request.auth.token.email || "",
       customerPhone: phone,
@@ -3139,12 +3139,12 @@ export const verifySubscriptionPayment = functions.https.onCall(
     const paymentDoc = paymentQuery.docs[0];
     const paymentData = paymentDoc.data();
 
-    // Already completed — return early (idempotent)
+    // Already completed, return early (idempotent)
     if (paymentData.status === "completed") {
       return { status: "already_active", message: "Subscription is active." };
     }
 
-    // Verify with Khalti (server-to-server — never trust frontend params)
+    // Verify with Khalti (server-to-server, never trust frontend params)
     const verification = await verifyKhaltiPayment(pidx);
 
     if (verification.status !== "Completed") {
@@ -3167,7 +3167,7 @@ export const verifySubscriptionPayment = functions.https.onCall(
       );
     }
 
-    // Payment verified — activate subscription
+    // Payment verified, activate subscription
     const plan = SUBSCRIPTION_PLANS[paymentData.planId];
     const now = new Date();
     const endDate = new Date(now);
@@ -3221,7 +3221,7 @@ export const verifySubscriptionPayment = functions.https.onCall(
 );
 ```
 
-### Private Video Access — Signed URLs
+### Private Video Access: Signed URLs
 
 The critical difference from the YouTube design: videos are **never made public**. Instead, we generate short-lived signed URLs for authenticated subscribers.
 
@@ -3232,11 +3232,11 @@ In the video processing service, replace the public access call with private upl
 ```typescript
 // video-processing-service/src/storage.ts (modified)
 
-// BEFORE (YouTube — public access):
+// BEFORE (YouTube, public access):
 // const [files] = await bucket.getFiles({ prefix: `${videoId}/` });
 // await Promise.all(files.map((file) => file.makePublic()));
 
-// AFTER (Netflix — private, no makePublic):
+// AFTER (Netflix, private, no makePublic):
 // Files are uploaded as private by default. No makePublic() call.
 // Access is controlled through signed URLs generated at request time.
 
@@ -3264,7 +3264,7 @@ async function uploadToProcessedBucket(
           contentType = "video/mp2t";
         }
 
-        // Upload as private — no makePublic()
+        // Upload as private, no makePublic()
         await bucket.upload(fullPath, {
           destination,
           metadata: { contentType },
@@ -3327,7 +3327,7 @@ export const getVideoAccess = functions.https.onCall(async (request) => {
     throw new functions.https.HttpsError("not-found", "Video not found.");
   }
 
-  // Signed URLs expire in 4 hours — enough for a movie
+  // Signed URLs expire in 4 hours, enough for a movie
   const expiration = Date.now() + 4 * 60 * 60 * 1000;
 
   const [masterUrl] = await masterPlaylistFile.getSignedUrl({
@@ -3375,7 +3375,7 @@ function getAllowedResolutions(maxResolution: string): string[] {
 }
 ```
 
-### Web Client — Subscription Flow
+### Web Client: Subscription Flow
 
 #### Payment Callback Page
 
@@ -3583,7 +3583,7 @@ export default function SubscribePage() {
 }
 ```
 
-#### Subscription Guard — Protect Video Pages
+#### Subscription Guard: Protect Video Pages
 
 Wrap the watch page with a guard that checks subscription status before loading the video player:
 
@@ -3660,7 +3660,7 @@ export default function WatchPage() {
 }
 ```
 
-### Video Player — Signed URL Integration
+### Video Player: Signed URL Integration
 
 The player needs to use signed URLs instead of public URLs. Since HLS playlists reference segment files by relative path, and signed URLs include query parameters, we need a custom loader:
 
@@ -3724,7 +3724,7 @@ export default function VideoPlayer() {
         } else if (
           videoRef.current.canPlayType("application/vnd.apple.mpegurl")
         ) {
-          // Safari native HLS — use master signed URL directly
+          // Safari native HLS, use master signed URL directly
           videoRef.current.src = masterUrl;
           setLoading(false);
         }
@@ -3757,7 +3757,7 @@ export default function VideoPlayer() {
 }
 ```
 
-### Subscription Expiry — Scheduled Cleanup
+### Subscription Expiry: Scheduled Cleanup
 
 Use a scheduled Cloud Function to expire subscriptions that have passed their end date:
 
@@ -3818,7 +3818,7 @@ For development, use Khalti's sandbox environment with these test credentials:
 
 Register for a sandbox merchant account at [Khalti's developer portal](https://dev.khalti.com/) to get your test secret key.
 
-### Payment Flow — End to End
+### Payment Flow: End to End
 
 User selects a plan. Frontend calls initiateSubscription().
 
@@ -3869,11 +3869,11 @@ Frontend loads the HLS player with signed URLs.
 
 ---
 
-## Design Udemy — Per-Course Purchase with Khalti Payment Gateway
+## Design Udemy: Per-Course Purchase with Khalti Payment Gateway
 
 This section builds on the same GCP infrastructure to create a Udemy-like platform where users **purchase individual courses** rather than subscribing to the entire library. Each course has its own price, and a user gains lifetime access to a course after a one-time payment through **Khalti**. Instructors upload course content, and the platform takes a revenue split.
 
-### Architecture Differences — Netflix vs Udemy
+### Architecture Differences: Netflix vs Udemy
 
 | Aspect                   | Netflix (Subscription)          | Udemy (Per-Course Purchase)                    |
 | ------------------------ | ------------------------------- | ---------------------------------------------- |
@@ -4069,7 +4069,7 @@ export const PLATFORM_FEE_PERCENT = 30; // Platform takes 30%
 export const INSTRUCTOR_SHARE_PERCENT = 70; // Instructor keeps 70%
 ```
 
-### Cloud Functions — Course Management
+### Cloud Functions: Course Management
 
 #### Create Course (Instructor)
 
@@ -4194,7 +4194,7 @@ export const publishCourse = functions.https.onCall(async (request) => {
 });
 ```
 
-### Cloud Functions — Course Purchase with Khalti
+### Cloud Functions: Course Purchase with Khalti
 
 #### Initiate Course Purchase
 
@@ -4354,7 +4354,7 @@ export const verifyCoursePurchase = functions.https.onCall(async (request) => {
   const paymentDoc = paymentQuery.docs[0];
   const paymentData = paymentDoc.data();
 
-  // Idempotent — already processed
+  // Idempotent, already processed
   if (paymentData.status === "completed") {
     return {
       status: "already_enrolled",
@@ -4384,7 +4384,7 @@ export const verifyCoursePurchase = functions.https.onCall(async (request) => {
     );
   }
 
-  // Payment verified — create enrollment and update records
+  // Payment verified, create enrollment and update records
   const batch = firestore.batch();
 
   // 1. Update payment status
@@ -4459,7 +4459,7 @@ export const verifyCoursePurchase = functions.https.onCall(async (request) => {
 });
 ```
 
-### Lesson Video Access — Enrollment Check
+### Lesson Video Access: Enrollment Check
 
 Unlike Netflix where any subscribed user can watch any video, Udemy requires checking that the user has purchased **this specific course** before serving the lesson video.
 
@@ -4536,7 +4536,7 @@ export const getLessonAccess = functions.https.onCall(async (request) => {
     );
   }
 
-  // Signed URLs expire in 6 hours — enough for long lectures
+  // Signed URLs expire in 6 hours, enough for long lectures
   const expiration = Date.now() + 6 * 60 * 60 * 1000;
 
   const [masterUrl] = await masterPlaylistFile.getSignedUrl({
@@ -4642,7 +4642,7 @@ export const markLessonComplete = functions.https.onCall(async (request) => {
 });
 ```
 
-### Web Client — Course Listing Page
+### Web Client: Course Listing Page
 
 ```tsx
 // app/courses/page.tsx
@@ -4749,7 +4749,7 @@ export default function CoursesPage() {
 }
 ```
 
-### Web Client — Course Detail Page
+### Web Client: Course Detail Page
 
 ```tsx
 // app/courses/[courseId]/page.tsx
@@ -4947,7 +4947,7 @@ export default function CourseDetailPage() {
 }
 ```
 
-### Web Client — Course Player Page
+### Web Client: Course Player Page
 
 The learning page shows the course curriculum sidebar with progress and plays lessons:
 
@@ -5137,7 +5137,7 @@ export default function CourseLearnPage() {
         )}
       </div>
 
-      {/* Sidebar — Course Curriculum */}
+      {/* Sidebar. Course Curriculum */}
       <div className="curriculum-sidebar">
         <div className="progress-header">
           <h3>{course.title}</h3>
@@ -5181,7 +5181,7 @@ export default function CourseLearnPage() {
 }
 ```
 
-### Payment Callback — Course Purchase
+### Payment Callback: Course Purchase
 
 Reuse the same callback page pattern from the Netflix section, but call `verifyCoursePurchase` instead:
 
@@ -5309,11 +5309,11 @@ export const requestRefund = functions.https.onCall(async (request) => {
     );
   }
 
-  // Check completion — no refund if more than 30% consumed
+  // Check completion, no refund if more than 30% consumed
   if (enrollment.progress.completionPercent > 30) {
     throw new functions.https.HttpsError(
       "failed-precondition",
-      "Refund not available — more than 30% of the course has been completed.",
+      "Refund not available, more than 30% of the course has been completed.",
     );
   }
 
@@ -5367,7 +5367,7 @@ export const requestRefund = functions.https.onCall(async (request) => {
 });
 ```
 
-### Purchase Flow — End to End
+### Purchase Flow: End to End
 
 User browses /courses and clicks on a course to open /courses/{courseId}.
 
@@ -5420,11 +5420,11 @@ User finishes a lesson. Frontend calls markLessonComplete().
 
 5. **Refund policy.** The 30-day / 30% completion refund policy protects both buyers and instructors. Refunds cascade through enrollment, payment, course counters, and instructor earnings.
 
-6. **No expiration.** Netflix subscriptions expire. Course purchases grant **lifetime access** — there's no scheduled cleanup function needed for enrollments.
+6. **No expiration.** Netflix subscriptions expire. Course purchases grant **lifetime access**: there's no scheduled cleanup function needed for enrollments.
 
 ### Security Considerations
 
-1. **Enrollment-level access control.** Every `getLessonAccess` call queries the enrollments collection. This is the authorization boundary — without an active enrollment, no signed URLs are generated.
+1. **Enrollment-level access control.** Every `getLessonAccess` call queries the enrollments collection. This is the authorization boundary: without an active enrollment, no signed URLs are generated.
 
 2. **Instructor isolation.** Instructors can only modify their own courses. The `createCourse` and `publishCourse` functions verify ownership before allowing changes.
 
@@ -5432,6 +5432,6 @@ User finishes a lesson. Frontend calls markLessonComplete().
 
 4. **Refund abuse prevention.** The dual constraint (30-day window + 30% completion cap) prevents users from completing a course and then requesting a refund.
 
-5. **Signed URL scoping.** Each `getLessonAccess` call generates signed URLs for only the requested lesson's video — not the entire course. This limits exposure if URLs are shared.
+5. **Signed URL scoping.** Each `getLessonAccess` call generates signed URLs for only the requested lesson's video: not the entire course. This limits exposure if URLs are shared.
 
-6. **Khalti amount verification.** Same as Netflix — always verify `total_amount` from Khalti's lookup response against your Firestore record before granting access.
+6. **Khalti amount verification.** Same as Netflix: always verify `total_amount` from Khalti's lookup response against your Firestore record before granting access.
