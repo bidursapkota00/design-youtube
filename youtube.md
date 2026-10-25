@@ -619,7 +619,13 @@ gcloud artifacts repositories create video-processing-repo \
   --description="Docker repo for video processing service"
 ```
 
-Or create through the UI: Artifact Registry → Repositories → Create Repository → Docker format → Google-managed encryption key.
+Or create through the UI:
+
+- Search Artifact Registry in Google Cloud Console.
+- Click Repositories.
+- Click Create Repository.
+- Select Docker format.
+- Use Google-managed encryption key.
 
 ### Build, Tag & Push the Docker Image
 
@@ -634,7 +640,12 @@ gcloud auth configure-docker us-central1-docker.pkg.dev
 docker push us-central1-docker.pkg.dev/<PROJECT_ID>/video-processing-repo/video-processing-service
 ```
 
-Verify in the UI: Artifact Registry → Repositories → `video-processing-repo` → `video-processing-service`.
+Verify in the UI:
+
+- Open Artifact Registry in Google Cloud Console.
+- Click Repositories.
+- Open the `video-processing-repo` repository.
+- Confirm the `video-processing-service` image is listed.
 
 ### Deploy to Cloud Run
 
@@ -644,9 +655,9 @@ gcloud services enable run.googleapis.com
 
 From the Cloud Console:
 
-1. Search **Cloud Run** → **Create Service**
+1. Search for **Cloud Run** in the Console and click **Create Service**
 2. Service name: `video-processing-service`
-3. Deploy from an existing container image → Select the pushed image
+3. Choose "Deploy from an existing container image" and select the pushed image
 4. Ingress control: **Internal**
 5. Authentication: **Allow unauthenticated invocations**
 
@@ -655,9 +666,9 @@ After deployment, you get a service URL (e.g., `https://video-processing-service
 ### Set Up Cloud Pub/Sub
 
 ```text
-From UI: Pub/Sub → Create Topic → "video-uploads-topic"
+From UI: Open Pub/Sub, click Create Topic, and name it "video-uploads-topic"
 
-From UI: Create Subscription → "video-uploads-subscription"
+From UI: Click Create Subscription, name it "video-uploads-subscription"
   Delivery type: Push
   Endpoint URL: https://video-processing-service-v6j6pvk7fq-uc.a.run.app/process-video
 ```
@@ -680,7 +691,7 @@ gsutil mb -l us-central1 gs://codeyalaya-yt-processed-videos
 
 ### Test the Pipeline
 
-1. Upload a video file to the `codeyalaya-yt-raw-videos` bucket (Cloud Console → Buckets → Upload Files)
+1. Upload a video file to the `codeyalaya-yt-raw-videos` bucket (open Cloud Console, navigate to Buckets, and click Upload Files)
 2. Check Cloud Run logs to see the processing
 3. Verify the processed video appears in `codeyalaya-yt-processed-videos`
 
@@ -801,7 +812,7 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 ```
 
-Get the config values from the Firebase Console: Project Settings → General → Your apps → Web app. These values are safe to expose in client-side code; Firebase Security Rules protect your data.
+Get the config values from the Firebase Console by going to Project Settings, then General, then Your apps, and selecting Web app. These values are safe to expose in client-side code; Firebase Security Rules protect your data.
 
 ### Create `src/app/firebase/auth.ts`
 
@@ -850,7 +861,7 @@ export function onAuthStateChangedHelper(
 
 ### Enable Google Sign-In in Firebase Console
 
-1. Firebase Console → Authentication → Sign-in method
+1. Open Firebase Console, go to Authentication, then select Sign-in method
 2. Enable **Google** provider
 3. Set the project support email
 
@@ -977,7 +988,7 @@ npm install firebase-functions@latest firebase-admin@latest
 
 ### Create Firestore Database
 
-In the Firebase Console: Firestore Database → **Create database**.
+In the Firebase Console, open Firestore Database and click **Create database**.
 
 ### Test the Emulator
 
@@ -1049,7 +1060,7 @@ export const createUser = functions.auth.user().onCreate(async (user) => {
 npm run deploy
 ```
 
-Verify in Firebase Console: Functions → Dashboard → `createUser` (1st gen).
+Verify in Firebase Console by going to Functions, then Dashboard, and confirming `createUser` appears (1st gen).
 
 ---
 
@@ -1103,15 +1114,25 @@ export const generateUploadUrl = onCall(
 firebase deploy --only functions:generateUploadUrl
 ```
 
-Verify in Google Cloud Console: Cloud Functions → `generateUploadUrl` (2nd gen). Note the service account (e.g., `437029731285-compute@developer.gserviceaccount.com`).
+Verify in Google Cloud Console by going to Cloud Functions and confirming `generateUploadUrl` appears (2nd gen). Note the service account (e.g., `437029731285-compute@developer.gserviceaccount.com`).
 
 ### Grant Permissions
 
 The Cloud Function's service account needs permission to create signed URLs:
 
-1. **Cloud Storage bucket permissions**: Go to Cloud Storage → `codeyalaya-yt-raw-videos` → Permissions → Grant Access → Add the service account principal (437029731285-compute@developer.gserviceaccount.com) → Role: **Cloud Storage → Storage Object Admin**
+1. **Cloud Storage bucket permissions**:
+   - Open Cloud Storage in the Google Cloud Console.
+   - Select the `codeyalaya-yt-raw-videos` bucket.
+   - Click the Permissions tab.
+   - Click Grant Access.
+   - Add the service account principal (437029731285-compute@developer.gserviceaccount.com).
+   - Set the role to **Cloud Storage > Storage Object Admin**.
 
-2. **Service Account Token Creator role**: Go to IAM & Admin → Find the compute service account → Edit → Add role: **Service Account Token Creator**
+2. **Service Account Token Creator role**:
+   - Open IAM & Admin in the Google Cloud Console.
+   - Find the compute service account in the list.
+   - Click Edit (pencil icon).
+   - Add the role **Service Account Token Creator**.
 
 3. **Verify from CLI**
 
@@ -1659,7 +1680,15 @@ gcloud artifacts repositories create yt-web-client-repo \
   --description="Docker repo for YouTube web client"
 ```
 
-Or from the UI: Artifact Registry → Create Repository → `yt-web-client-repo` → Docker → Standard → Region → Google-managed encryption key.
+Or from the UI:
+
+- Open Artifact Registry in Google Cloud Console.
+- Click Create Repository.
+- Name it `yt-web-client-repo`.
+- Select Docker as the format.
+- Choose Standard mode.
+- Select your preferred region.
+- Use Google-managed encryption key.
 
 ### Build, Push & Deploy
 
@@ -1682,13 +1711,13 @@ gcloud run deploy yt-web-client \
   --max-instances=1
 ```
 
-When prompted: `Allow unauthenticated invocations to [yt-web-client] (y/N)?` → **y**
+When prompted: `Allow unauthenticated invocations to [yt-web-client] (y/N)?` — answer **y**
 
 After deployment, you get a service URL (e.g., `https://yt-web-client-v6j6pvk7fq-uc.a.run.app`).
 
 ### Add Cloud Run URL to Firebase Authorized Domains
 
-1. Firebase Console → Authentication → Settings → Authorized domains
+1. Open Firebase Console, go to Authentication, click Settings, then select Authorized domains
 2. Add the Cloud Run service URL (e.g., `yt-web-client-v6j6pvk7fq-uc.a.run.app`)
 
 This allows Firebase Authentication to work from the deployed domain. Without this, Google sign-in will fail with an unauthorized domain error.
@@ -1705,9 +1734,9 @@ HLS splits a video into small `.ts` (Transport Stream) segments — typically 6�
 
 ```text
 master.m3u8
-├── 360p/playlist.m3u8  → 360p/segment000.ts, 360p/segment001.ts, ...
-├── 480p/playlist.m3u8  → 480p/segment000.ts, 480p/segment001.ts, ...
-└── 720p/playlist.m3u8  → 720p/segment000.ts, 720p/segment001.ts, ...
+├── 360p/playlist.m3u8  (references 360p/segment000.ts, 360p/segment001.ts, ...)
+├── 480p/playlist.m3u8  (references 480p/segment000.ts, 480p/segment001.ts, ...)
+└── 720p/playlist.m3u8  (references 720p/segment000.ts, 720p/segment001.ts, ...)
 ```
 
 The player starts with the quality that matches current bandwidth. If the network degrades mid-stream, it drops to a lower variant without rebuffering. If bandwidth improves, it steps up seamlessly.
@@ -2389,7 +2418,7 @@ The only change from the original watch page is replacing the plain `<video>` el
 ### Test the Full Pipeline
 
 1. **Upload a video** through the web client's Upload button
-2. **Cloud Storage → Pub/Sub → Cloud Run** triggers the processing service
+2. **Cloud Storage to Pub/Sub to Cloud Run** triggers the processing service
 3. **Check Cloud Run logs** — you should see transcoding messages for each variant:
    ```text
    Transcoding 360p finished.
@@ -2413,8 +2442,8 @@ The only change from the original watch page is replacing the plain `<video>` el
    ...
    ```
 5. **Open the watch page** — the HLS player should load and show quality buttons (Auto, 360p, 480p, 720p)
-6. **Test quality switching** — click different quality buttons and observe the resolution change. Open browser DevTools → Network tab to see `.ts` segment requests switch between variants.
-7. **Test auto mode** — click Auto, then throttle the network in DevTools (Network → Slow 3G). The player should drop to 360p. Remove throttling and it should climb back to 720p.
+6. **Test quality switching** — click different quality buttons and observe the resolution change. Open browser DevTools, go to the Network tab, to see `.ts` segment requests switch between variants.
+7. **Test auto mode** — click Auto, then throttle the network in DevTools (Network tab, select Slow 3G). The player should drop to 360p. Remove throttling and it should climb back to 720p.
 
 ---
 
@@ -2679,7 +2708,7 @@ gcloud compute backend-buckets describe processed-videos-backend \
   --format="value(cdnPolicy)"
 ```
 
-In the Cloud Console: **Network services → Cloud CDN** → Select your backend → View metrics:
+In the Cloud Console, open **Network services**, click **Cloud CDN**, select your backend, and view metrics:
 
 - **Cache hit ratio** — Percentage of requests served from edge cache. For a video platform with repeat viewers, expect 80–95%+ after warmup.
 - **Bandwidth** — Total bytes served, split by cache hit vs. origin fetch.
@@ -2704,14 +2733,14 @@ Look for:
 
 CDN adds a caching layer but changes the cost structure:
 
-| Cost Component                 | Without CDN                      | With CDN                              |
-| ------------------------------ | -------------------------------- | ------------------------------------- |
-| **Storage**                    | Same                             | Same                                  |
-| **Egress (origin → internet)** | All traffic from `us-central1`   | Only cache misses                     |
-| **Egress (CDN → internet)**    | N/A                              | Cache hits served at CDN egress rates |
-| **CDN cache fill**             | N/A                              | Origin → edge transfer (per-region)   |
-| **HTTP/HTTPS requests**        | Cloud Storage operations pricing | CDN request pricing                   |
-| **Cache invalidation**         | N/A                              | Free (up to limits; throttled beyond) |
+| Cost Component                  | Without CDN                      | With CDN                              |
+| ------------------------------- | -------------------------------- | ------------------------------------- |
+| **Storage**                     | Same                             | Same                                  |
+| **Egress (origin to internet)** | All traffic from `us-central1`   | Only cache misses                     |
+| **Egress (CDN to internet)**    | N/A                              | Cache hits served at CDN egress rates |
+| **CDN cache fill**              | N/A                              | Origin to edge transfer (per-region)  |
+| **HTTP/HTTPS requests**         | Cloud Storage operations pricing | CDN request pricing                   |
+| **Cache invalidation**          | N/A                              | Free (up to limits; throttled beyond) |
 
 CDN egress is generally **cheaper per GB** than direct Cloud Storage egress, and the cache hit ratio means most bytes are served from edge — reducing total origin egress significantly. For a video platform, the savings compound because popular videos are requested thousands of times but only fetched from origin once per edge per TTL.
 
@@ -2734,7 +2763,7 @@ This section extends the YouTube architecture into a Netflix-like system where v
 | **User model**     | Basic profile                         | Profile + subscription status + payment history |
 | **Upload**         | Any authenticated user                | Admin-only (content management)                 |
 
-The core video processing pipeline (upload → Pub/Sub → Cloud Run → FFmpeg → HLS) remains identical. The difference is entirely in **how processed videos are served** and **who can access them**.
+The core video processing pipeline (upload to Pub/Sub to Cloud Run to FFmpeg to HLS) remains identical. The difference is entirely in **how processed videos are served** and **who can access them**.
 
 ### Subscription Tiers
 
@@ -2852,7 +2881,7 @@ subscriptionHistory/{historyId}
 
 ### Khalti Payment Gateway — Integration
 
-Khalti's ePayment v2 API uses a server-to-server flow: **Initiate → Redirect → Verify**. Your backend initiates the payment, Khalti handles the checkout UI, and your backend verifies the result. The user never sees your secret key.
+Khalti's ePayment v2 API uses a server-to-server flow: **Initiate, Redirect, then Verify**. Your backend initiates the payment, Khalti handles the checkout UI, and your backend verifies the result. The user never sees your secret key.
 
 #### Environment Configuration
 
@@ -3791,35 +3820,38 @@ Register for a sandbox merchant account at [Khalti's developer portal](https://d
 
 ### Payment Flow — End to End
 
-```
-User selects plan → Frontend calls initiateSubscription() →
-  → Cloud Function creates Firestore payment record
-  → Cloud Function POSTs to Khalti /epayment/initiate/
-  → Khalti returns { pidx, payment_url }
-  → Cloud Function returns payment_url to frontend
+User selects a plan. Frontend calls initiateSubscription().
 
-Frontend redirects user to payment_url →
-  → User completes payment on Khalti's checkout page
-  → Khalti redirects user to return_url with ?pidx=...&status=Completed
+- Cloud Function creates a Firestore payment record.
+- Cloud Function POSTs to Khalti /epayment/initiate/.
+- Khalti returns { pidx, payment_url }.
+- Cloud Function returns the payment_url to the frontend.
 
-Frontend (callback page) calls verifySubscriptionPayment({ pidx }) →
-  → Cloud Function POSTs to Khalti /epayment/lookup/
-  → Khalti returns { status: "Completed", transaction_id }
-  → Cloud Function verifies amount matches
-  → Cloud Function activates subscription in Firestore (batch write)
-  → Returns success to frontend
+Frontend redirects the user to the payment_url.
 
-User requests video → Frontend calls getVideoAccess({ videoId }) →
-  → Cloud Function checks subscription.status === "active"
-  → Cloud Function checks subscription.endDate > now
-  → Cloud Function checks plan's maxResolution
-  → Cloud Function generates signed URLs (4-hour expiry)
-  → Returns signed URLs to frontend
+- User completes the payment on Khalti's checkout page.
+- Khalti redirects the user to the return_url with ?pidx=...&status=Completed.
 
-Frontend loads HLS player with signed URLs →
-  → Custom XHR loader rewrites segment requests to signed URLs
-  → Video plays (private bucket, no public access)
-```
+Frontend (callback page) calls verifySubscriptionPayment({ pidx }).
+
+- Cloud Function POSTs to Khalti /epayment/lookup/.
+- Khalti returns { status: "Completed", transaction_id }.
+- Cloud Function verifies the amount matches.
+- Cloud Function activates the subscription in Firestore (batch write).
+- Returns success to the frontend.
+
+User requests a video. Frontend calls getVideoAccess({ videoId }).
+
+- Cloud Function checks subscription.status === "active".
+- Cloud Function checks subscription.endDate > now.
+- Cloud Function checks the plan's maxResolution.
+- Cloud Function generates signed URLs (4-hour expiry).
+- Returns signed URLs to the frontend.
+
+Frontend loads the HLS player with signed URLs.
+
+- Custom XHR loader rewrites segment requests to signed URLs.
+- Video plays (private bucket, no public access).
 
 ### Security Considerations
 
@@ -3847,7 +3879,7 @@ This section builds on the same GCP infrastructure to create a Udemy-like platfo
 | ------------------------ | ------------------------------- | ---------------------------------------------- |
 | **Access model**         | All content for one monthly fee | Individual course purchase (lifetime access)   |
 | **Payment frequency**    | Recurring monthly               | One-time per course                            |
-| **Content organization** | Flat video library              | Courses → Sections → Lessons (videos)          |
+| **Content organization** | Flat video library              | Courses > Sections > Lessons (videos)          |
 | **Content creators**     | Platform only (admin)           | Any approved instructor can upload             |
 | **Revenue model**        | Subscription revenue            | Per-sale revenue split (platform + instructor) |
 | **Progress tracking**    | Optional (continue watching)    | Essential (completion %, certificates)         |
@@ -5337,40 +5369,44 @@ export const requestRefund = functions.https.onCall(async (request) => {
 
 ### Purchase Flow — End to End
 
-```
-User browses /courses → clicks on a course → /courses/{courseId} →
-  → Sees course details, curriculum, price, "Buy with Khalti" button
+User browses /courses and clicks on a course to open /courses/{courseId}.
 
-User clicks "Buy with Khalti" → Frontend calls initiateCoursePurchase() →
-  → Cloud Function checks user isn't already enrolled
-  → Cloud Function creates payment record with revenue split
-  → Cloud Function POSTs to Khalti /epayment/initiate/
-  → Returns payment_url to frontend
+- Sees course details, curriculum, price, and the "Buy with Khalti" button.
 
-Frontend redirects to Khalti checkout →
-  → User pays via Khalti (wallet, bank, card)
-  → Khalti redirects to /payment/course-callback?pidx=...
+User clicks "Buy with Khalti". Frontend calls initiateCoursePurchase().
 
-Callback page calls verifyCoursePurchase({ pidx }) →
-  → Cloud Function verifies with Khalti /epayment/lookup/
-  → Validates amount matches
-  → Creates enrollment record (lifetime access)
-  → Increments course enrollment count
-  → Updates instructor earnings
-  → Returns success
+- Cloud Function checks the user isn't already enrolled.
+- Cloud Function creates a payment record with the revenue split.
+- Cloud Function POSTs to Khalti /epayment/initiate/.
+- Returns the payment_url to the frontend.
 
-User goes to /courses/{courseId}/learn →
-  → Sidebar shows curriculum with progress
-  → User clicks a lesson → Frontend calls getLessonAccess()
-  → Cloud Function checks enrollment exists and is active
-  → Generates signed URLs for that lesson's video
-  → HLS player loads with signed URLs
+Frontend redirects to the Khalti checkout page.
 
-User finishes a lesson → Frontend calls markLessonComplete() →
-  → Updates progress in enrollment document
-  → Recalculates completion percentage
-  → Issues certificate at 100%
-```
+- User pays via Khalti (wallet, bank, or card).
+- Khalti redirects to /payment/course-callback?pidx=...
+
+Callback page calls verifyCoursePurchase({ pidx }).
+
+- Cloud Function verifies with Khalti /epayment/lookup/.
+- Validates the amount matches.
+- Creates an enrollment record (lifetime access).
+- Increments the course enrollment count.
+- Updates instructor earnings.
+- Returns success.
+
+User goes to /courses/{courseId}/learn.
+
+- Sidebar shows the curriculum with progress.
+- User clicks a lesson. Frontend calls getLessonAccess().
+- Cloud Function checks the enrollment exists and is active.
+- Generates signed URLs for that lesson's video.
+- HLS player loads with signed URLs.
+
+User finishes a lesson. Frontend calls markLessonComplete().
+
+- Updates progress in the enrollment document.
+- Recalculates the completion percentage.
+- Issues a certificate at 100%.
 
 ### Key Differences from Netflix Implementation
 
