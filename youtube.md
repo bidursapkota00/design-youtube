@@ -2,7 +2,7 @@
 
 ![Bidur Sapkota](https://www.bidursapkota.com.np/images/gravatar.webp "Bidur Sapkota - Developer")&nbsp;[Bidur Sapkota](https://www.bidursapkota.com.np/)
 
-![Design YouTube: Full Stack & System Design Guide by Bidur Sapkota](youtube-1200.webp "Design YouTube: Full Stack & System Design Guide – Blog by Bidur Sapkota")
+![Design YouTube: Full Stack & System Design Guide by Bidur Sapkota](images/youtube-1200.webp "Design YouTube: Full Stack & System Design Guide – Blog by Bidur Sapkota")
 
 ## Table of Contents
 
@@ -37,6 +37,8 @@ This project builds a simplified YouTube clone using Google Cloud services. The 
 - **YouTube Web Client** is a Next.js frontend that provides Google sign-in, video upload via signed URLs, a video listing homepage, and a watch page.
 
 Cloud Pub/Sub connects Cloud Storage to the processing service: when a raw video is uploaded, a notification triggers the processing pipeline automatically.
+
+![YouTube Architecture](images/youtube-arch.webp "YouTube Architecture")
 
 ---
 
@@ -2754,14 +2756,14 @@ This section extends the YouTube architecture into a Netflix-like system where v
 
 ### Architecture Differences from YouTube
 
-| Aspect             | YouTube (Public)                      | Netflix (Subscription)                          |
-| ------------------ | ------------------------------------- | ----------------------------------------------- |
-| **Video access**   | `file.makePublic()`, anyone can view | Private bucket, signed URLs only               |
-| **Authentication** | Optional for viewing                  | Required for all video access                   |
-| **Authorization**  | None                                  | Subscription tier check before serving          |
-| **Payment**        | None                                  | Khalti ePayment integration                     |
-| **User model**     | Basic profile                         | Profile + subscription status + payment history |
-| **Upload**         | Any authenticated user                | Admin-only (content management)                 |
+| Aspect             | YouTube (Public)                     | Netflix (Subscription)                          |
+| ------------------ | ------------------------------------ | ----------------------------------------------- |
+| **Video access**   | `file.makePublic()`, anyone can view | Private bucket, signed URLs only                |
+| **Authentication** | Optional for viewing                 | Required for all video access                   |
+| **Authorization**  | None                                 | Subscription tier check before serving          |
+| **Payment**        | None                                 | Khalti ePayment integration                     |
+| **User model**     | Basic profile                        | Profile + subscription status + payment history |
+| **Upload**         | Any authenticated user               | Admin-only (content management)                 |
 
 The core video processing pipeline (upload to Pub/Sub to Cloud Run to FFmpeg to HLS) remains identical. The difference is entirely in **how processed videos are served** and **who can access them**.
 
