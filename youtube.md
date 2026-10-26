@@ -25,6 +25,7 @@
 17. [Content Delivery Network (CDN)](#content-delivery-network-cdn)
 18. [Design Netflix: Subscription-Based Streaming with Khalti Payment Gateway](#design-netflix--subscription-based-streaming-with-khalti-payment-gateway)
 19. [Design Udemy: Per-Course Purchase with Khalti Payment Gateway](#design-udemy--per-course-purchase-with-khalti-payment-gateway)
+20. [Security Audit & Hardening](#security-audit--hardening)
 
 ---
 
@@ -5437,3 +5438,402 @@ User finishes a lesson. Frontend calls markLessonComplete().
 5. **Signed URL scoping.** Each `getLessonAccess` call generates signed URLs for only the requested lesson's video: not the entire course. This limits exposure if URLs are shared.
 
 6. **Khalti amount verification.** Same as Netflix: always verify `total_amount` from Khalti's lookup response against your Firestore record before granting access.
+
+---
+
+## Security Audit & Hardening
+
+This section provides a structured security audit and production hardening guide for the full-stack architecture covered across YouTube, Netflix, and Udemy designs. It addresses vulnerabilities in file handling, cloud infrastructure, access control, and financial operations.
+
+### 1. Ingestion & Transcoding Pipeline Hardening
+
+#### Path Traversal & Safe Path Resolution
+
+The video processing service interacts with local disk storage during download and transcoding. If an uploaded object name contains directory traversal characters (such as `../`), file operations can escape the intended scratch directory and overwrite or delete system files.
+
+Always sanitize filenames using `path.basename` and verify the canonical path:
+
+```typescript
+import path from "path";
+
+export function getSafeFilePath(baseDir: string, userFileName: string): string {
+  // Strip any leading directory paths
+  const sanitizedFileName = path.basename(userFileName);
+
+  // Resolve absolute path
+  const resolvedPath = path.resolve(baseDir, sanitizedFileName);
+  const resolvedBase = path.resolve(baseDir);
+
+  // Verify the target path remains strictly within the intended base directory
+  if (!resolvedPath.startsWith(resolvedBase + path.sep)) {
+    throw new Error("Path traversal detected in file operation");
+  }
+
+  return resolvedPath;
+}
+```
+
+#### Pub/Sub Push Authentication (OIDC Verification)
+
+Deploying Cloud Run with unauthenticated access allows any client with network connectivity to forge push events. Instead, enforce authentication on Cloud Run and configure Pub/Sub to sign requests with an OpenID Connect (OIDC) token.
+
+1. **Deploy Cloud Run with authentication required:**
+
+```bash
+gcloud run deploy video-processing-service \
+  --image us-central1-docker.pkg.dev/<PROJECT_ID>/video-processing-repo/video-processing-service \
+  --no-allow-unauthenticated \
+  --ingress=internal
+```
+
+2. **Create a dedicated service account for Pub/Sub:**
+
+```bash
+gcloud iam service-accounts create pubsub-invoker \
+  --display-name="Pub/Sub Cloud Run Invoker"
+
+gcloud run services add-iam-policy-binding video-processing-service \
+  --member="serviceAccount:pubsub-invoker@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
+```
+
+3. **Configure Pub/Sub subscription with OIDC authentication:**
+
+```bash
+gcloud pubsub subscriptions update video-uploads-subscription \
+  --push-auth-service-account=pubsub-invoker@<PROJECT_ID>.iam.gserviceaccount.com \
+  --push-auth-token-audience=https://video-processing-service-v6j6pvk7fq-uc.a.run.app
+```
+
+#### Video Decompression Bomb & Resource Defense
+
+Before launching CPU-heavy FFmpeg transcoding, inspect video container metadata with `ffprobe` to validate codecs, duration, and dimensions. Reject anomalous inputs that can trigger denial-of-service (such as infinite duration or nested loops):
+
+```typescript
+import ffmpeg from "fluent-ffmpeg";
+
+export async function validateVideoMetadata(filePath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) {
+        return reject(new Error("Unable to parse video file headers."));
+      }
+
+      const duration = metadata.format.duration || 0;
+      const MAX_DURATION_SECONDS = 7200; // 2 hours max
+
+      if (duration <= 0 || duration > MAX_DURATION_SECONDS) {
+        return reject(
+          new Error(`Invalid duration: ${duration}s exceeds limit.`),
+        );
+      }
+
+      const videoStream = metadata.streams.find(
+        (s) => s.codec_type === "video",
+      );
+      if (!videoStream) {
+        return reject(new Error("No valid video stream identified."));
+      }
+
+      // Prohibit excessively large dimensions (e.g., decompression bombs)
+      if ((videoStream.width || 0) > 4096 || (videoStream.height || 0) > 2160) {
+        return reject(new Error("Video resolution exceeds 4K limits."));
+      }
+
+      resolve();
+    });
+  });
+}
+```
+
+#### Atomic Video State Transitions (Firestore Transactions)
+
+The check `if (!(await isVideoNew(videoId)))` followed by `await setVideo(...)` introduces a race condition (TOCTOU). If two Pub/Sub messages arrive concurrently, both can enter the processing block.
+
+Use a Firestore transaction to atomically lock and claim the video processing task:
+
+```typescript
+export async function claimVideoForProcessing(
+  videoId: string,
+  uid: string,
+): Promise<boolean> {
+  const videoRef = firestore.collection("videos").doc(videoId);
+
+  return firestore.runTransaction(async (transaction) => {
+    const doc = await transaction.get(videoRef);
+    if (doc.exists && doc.data()?.status) {
+      return false; // Already claimed or processed
+    }
+
+    transaction.set(
+      videoRef,
+      {
+        id: videoId,
+        uid,
+        status: "processing",
+        claimedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    return true;
+  });
+}
+```
+
+---
+
+### 2. Cloud Storage & IAM Least Privilege
+
+#### Principle of Least Privilege for Cloud Functions
+
+Granting `Storage Object Admin` and `Service Account Token Creator` to the default compute service account poses substantial privilege escalation risks.
+
+Instead, create a dedicated service account for your Cloud Functions:
+
+```bash
+# 1. Create a dedicated service account
+gcloud iam service-accounts create yt-functions-sa \
+  --display-name="YouTube Functions Service Account"
+
+# 2. Grant read/write only on the raw bucket
+gsutil iam ch \
+  serviceAccount:yt-functions-sa@<PROJECT_ID>.iam.gserviceaccount.com:objectCreator \
+  gs://codeyalaya-yt-raw-videos
+
+# 3. Grant read/write only on the processed bucket
+gsutil iam ch \
+  serviceAccount:yt-functions-sa@<PROJECT_ID>.iam.gserviceaccount.com:objectAdmin \
+  gs://codeyalaya-yt-processed-videos
+
+# 4. Scope token creation only to itself for signed URL generation
+gcloud iam service-accounts add-iam-policy-binding \
+  yt-functions-sa@<PROJECT_ID>.iam.gserviceaccount.com \
+  --member="serviceAccount:yt-functions-sa@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+#### Restrictive Bucket CORS Configuration
+
+Avoid wildcard origins (`"*"`) for upload and streaming buckets. Restrict origins strictly to your verified frontend domains:
+
+```json
+[
+  {
+    "origin": [
+      "https://yourdomain.com",
+      "https://yt-web-client-v6j6pvk7fq-uc.a.run.app"
+    ],
+    "responseHeader": ["Content-Type", "Content-Length", "Range"],
+    "method": ["GET", "HEAD", "PUT"],
+    "maxAgeSeconds": 3600
+  }
+]
+```
+
+#### Secure Upload Signed URLs
+
+Enforce file extension whitelisting, Content-Type restrictions, and maximum file size in `generateUploadUrl`:
+
+```typescript
+const ALLOWED_EXTENSIONS = new Set(["mp4", "mov", "mkv", "webm"]);
+const ALLOWED_MIME_TYPES = new Set([
+  "video/mp4",
+  "video/quicktime",
+  "video/x-matroska",
+  "video/webm",
+]);
+
+export const generateUploadUrl = onCall(async (request) => {
+  if (!request.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "Authentication required.",
+    );
+  }
+
+  const { fileExtension, contentType, fileSize } = request.data;
+
+  // Validate extension
+  const cleanExt = (fileExtension || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  if (!ALLOWED_EXTENSIONS.has(cleanExt)) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Unsupported file extension.",
+    );
+  }
+
+  // Validate MIME type
+  if (!ALLOWED_MIME_TYPES.has(contentType)) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Unsupported content type.",
+    );
+  }
+
+  // Enforce 1GB upload limit
+  const MAX_FILE_SIZE = 1024 * 1024 * 1024;
+  if (!fileSize || fileSize > MAX_FILE_SIZE) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "File size exceeds 1GB limit.",
+    );
+  }
+
+  const fileName = `${request.auth.uid}-${Date.now()}.${cleanExt}`;
+  const bucket = storage.bucket(rawVideoBucketName);
+
+  const [url] = await bucket.file(fileName).getSignedUrl({
+    version: "v4",
+    action: "write",
+    expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+    contentType,
+  });
+
+  return { url, fileName };
+});
+```
+
+---
+
+### 3. Access Control & Authorization (Netflix & Udemy)
+
+#### Comprehensive Firestore Security Rules
+
+Without rules, any authenticated user can alter course prices, publish unreviewed courses, or grant themselves access. Deploy these rules via `firestore.rules`:
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    function isInstructor() {
+      return isAuthenticated() && (request.auth.token.role == 'instructor' || isAdmin());
+    }
+
+    // Users Collection: users can read and update only their own profile
+    // Role and subscription fields are restricted from client-side writes
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'subscription']);
+      allow delete: if isAdmin();
+    }
+
+    // Courses Collection: public read for published courses; instructors can draft
+    match /courses/{courseId} {
+      allow read: if resource.data.status == 'published' || isOwner(resource.data.instructorId) || isAdmin();
+      allow create: if isInstructor();
+      allow update: if (isOwner(resource.data.instructorId) || isAdmin())
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['enrollmentCount', 'priceNPR', 'pricePaisa']);
+      allow delete: if isAdmin();
+    }
+
+    // Enrollments: users can read their own enrollments; writes reserved for Cloud Functions
+    match /enrollments/{enrollmentId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow write: if false; // Only Cloud Functions (Admin SDK) can write enrollments
+    }
+
+    // Payments & Instructor Earnings: strict server-side only writes
+    match /payments/{paymentId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow write: if false;
+    }
+
+    match /instructorEarnings/{instructorId} {
+      allow read: if isOwner(instructorId) || isAdmin();
+      allow write: if false;
+    }
+  }
+}
+```
+
+#### High-Performance HLS Protection: Signed Cookies vs. Segment Signing
+
+Generating signed URLs for every `.ts` segment in a loop inside Cloud Functions causes function timeouts, severe latency, and API quota exhaustion on multi-segment videos.
+
+**Recommended Solution:** Use **Cloud CDN Signed Cookies** or **Cloud CDN Signed URLs** with path prefix matching:
+
+- Instead of signing thousands of individual segment files, sign a URL prefix pattern (e.g. `https://cdn.yourdomain.com/<videoId>/*`) with a cryptographic key configured on your Cloud CDN backend.
+- The player receives a single signed master URL or cookie that authorizes playback for all underlying segments automatically without individual API calls.
+
+---
+
+### 4. Financial & Payment Integrity (Khalti Integration)
+
+#### Server-to-Server Webhook & Payment Reconciliation
+
+Relying entirely on frontend URL redirects to verify payments leaves payments vulnerable to network drops, tab closures, or browser crashes.
+
+1. **Implement an HTTP Webhook Endpoint for Khalti Notifications:**
+
+```typescript
+export const khaltiWebhook = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
+
+  const { pidx } = req.body;
+  if (!pidx) {
+    res.status(400).send("Missing pidx");
+    return;
+  }
+
+  try {
+    const verification = await verifyKhaltiPayment(pidx);
+    if (verification.status === "Completed") {
+      await fulfillPayment(pidx, verification);
+    }
+    res.status(200).json({ received: true });
+  } catch (err) {
+    console.error("Webhook processing error:", err);
+    res.status(500).send("Internal Error");
+  }
+});
+```
+
+2. **Scheduled Reconciliation Task:**
+   Run a scheduled Cloud Function every 15 minutes to query payments in `"initiated"` status older than 10 minutes and verify them directly with Khalti's `/epayment/lookup/` API.
+
+#### Telemetry-Driven Progress Tracking for Refund Protection
+
+To prevent users from watching 100% of course content and claiming a full refund by withholding client-side "Mark Complete" clicks:
+
+- Log playback events server-side when `getLessonAccess` issues signed tokens.
+- Maintain a `lessonsWatched` set in the enrollment document updated whenever a lesson access token is generated.
+- In `requestRefund`, calculate consumption as `max(completionPercent, (lessonsWatched.length / totalLessons) * 100)`. If this value exceeds 30%, reject the refund.
+
+---
+
+### 5. Priority Remediation Matrix
+
+| Category            | Finding                                  | Severity | Priority  | Recommended Action                                                             |
+| :------------------ | :--------------------------------------- | :------- | :-------- | :----------------------------------------------------------------------------- |
+| **Cloud Run**       | Unauthenticated `/process-video`         | Critical | Immediate | Require Cloud Run auth (`--no-allow-unauthenticated`) & Pub/Sub OIDC tokens    |
+| **File System**     | Path traversal in downloads & HLS paths  | Critical | Immediate | Enforce `path.basename` and `path.resolve` directory containment checks        |
+| **Firestore**       | Missing security rules                   | Critical | Immediate | Deploy `firestore.rules` preventing client modification of roles and prices    |
+| **Cloud Storage**   | Overly privileged service account        | High     | Near-Term | Replace project-wide `Storage Object Admin` with bucket-scoped least privilege |
+| **Storage / CORS**  | Wildcard `*` in upload and CDN CORS      | High     | Near-Term | Restrict origins strictly to production frontend domains                       |
+| **Upload Pipeline** | Unrestricted file extensions and sizes   | High     | Near-Term | Whitelist extensions (`mp4`, `mov`), bind MIME type, and limit file size       |
+| **Business Logic**  | Refund fraud via unrecorded progress     | High     | Near-Term | Track video access server-side to enforce the 30% consumption ceiling          |
+| **Khalti Payment**  | Client-only callback verification        | Medium   | Near-Term | Add server webhook and periodic cron reconciliation for initiated payments     |
+| **Cloud Functions** | `maxInstances: 1` concurrency bottleneck | Medium   | Scheduled | Remove hardcoded `maxInstances: 1` on public endpoints to prevent self-DoS     |
+| **Streaming / HLS** | Bulk segment signing loop                | Medium   | Scheduled | Transition to Cloud CDN Signed Cookies with path prefix authorization          |
