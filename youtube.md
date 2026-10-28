@@ -2786,17 +2786,6 @@ CDN egress is generally **cheaper per GB** than direct Cloud Storage egress, and
 
 This section extends the YouTube architecture into a Netflix-like system where videos are **private by default** and only accessible to users with an active subscription. Instead of `file.makePublic()`, we serve videos through **signed URLs** generated on demand after verifying the user's subscription status. Payments are handled through **Khalti**, Nepal's payment gateway, using their ePayment v2 API.
 
-### Architecture Differences from YouTube
-
-| Aspect             | YouTube (Public)                     | Netflix (Subscription)                          |
-| ------------------ | ------------------------------------ | ----------------------------------------------- |
-| **Video access**   | `file.makePublic()`, anyone can view | Private bucket, signed URLs only                |
-| **Authentication** | Optional for viewing                 | Required for all video access                   |
-| **Authorization**  | None                                 | Subscription tier check before serving          |
-| **Payment**        | None                                 | Khalti ePayment integration                     |
-| **User model**     | Basic profile                        | Profile + subscription status + payment history |
-| **Upload**         | Any authenticated user               | Admin-only (content management)                 |
-
 The core video processing pipeline (upload to Pub/Sub to Cloud Run to FFmpeg to HLS) remains identical. The difference is entirely in **how processed videos are served** and **who can access them**.
 
 ### Subscription Tiers
@@ -2804,7 +2793,7 @@ The core video processing pipeline (upload to Pub/Sub to Cloud Run to FFmpeg to 
 Define the subscription plans your platform offers:
 
 ```typescript
-// src/types/subscription.ts
+// functions/src/types/subscription.ts
 
 export interface SubscriptionPlan {
   id: string;
@@ -3264,7 +3253,7 @@ The critical difference from the YouTube design: videos are **never made public*
 In the video processing service, replace the public access call with private upload only:
 
 ```typescript
-// video-processing-service/src/storage.ts (modified)
+// video-processing-service/src/storage.ts
 
 // BEFORE (YouTube, public access):
 // const [files] = await bucket.getFiles({ prefix: `${videoId}/` });
@@ -3274,7 +3263,7 @@ In the video processing service, replace the public access call with private upl
 // Files are uploaded as private by default. No makePublic() call.
 // Access is controlled through signed URLs generated at request time.
 
-async function uploadToProcessedBucket(
+export async function uploadHlsOutput(
   localDir: string,
   videoId: string,
 ): Promise<void> {
@@ -3291,14 +3280,20 @@ async function uploadToProcessedBucket(
       } else {
         const destination = path.relative(localProcessedVideoPath, fullPath);
 
+        // Determine Content-Type and Cache-Control
         let contentType = "application/octet-stream";
+        let cacheControl = "public, max-age=86400"; // Default: 24 hours
+
         if (entry.name.endsWith(".m3u8")) {
           contentType = "application/vnd.apple.mpegurl";
+          // Playlists are small and should be fresh, short cache
+          cacheControl = "public, max-age=60, s-maxage=300";
         } else if (entry.name.endsWith(".ts")) {
           contentType = "video/mp2t";
+          // Segments are immutable once written, long cache
+          cacheControl = "public, max-age=604800, immutable";
         }
 
-        // Upload as private, no makePublic()
         await bucket.upload(fullPath, {
           destination,
           metadata: { contentType },
@@ -3308,7 +3303,7 @@ async function uploadToProcessedBucket(
   }
 
   await uploadRecursive(localDir);
-  console.log(`HLS output for ${videoId} uploaded (private).`);
+  console.log(`HLS output for ${videoId} uploaded.`);
 }
 ```
 
