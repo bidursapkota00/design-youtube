@@ -209,8 +209,8 @@ app.listen(port, () => {
 POST http://localhost:3000/process-video
 
 {
-  "inputFilePath": "./nc-intro.mov",
-  "outputFilePath": "./processed-nc-intro.mov"
+  "inputFilePath": "./input.mp4",
+  "outputFilePath": "./processed-input.mp4"
 }
 
 Status: 200 OK
@@ -328,7 +328,7 @@ docker ps
 Copy a test video into the running container, process it, and copy the result back:
 
 ```bash
-docker cp ./nc-intro.mov <container_name>:/app/nc-intro.mov
+docker cp ./input.mp4 <container_name>:/app/input.mp4
 ```
 
 Send the processing request:
@@ -337,8 +337,8 @@ Send the processing request:
 POST http://localhost:3000/process-video
 
 {
-  "inputFilePath": "./nc-intro.mov",
-  "outputFilePath": "./processed-nc-intro.mov"
+  "inputFilePath": "./input.mp4",
+  "outputFilePath": "./processed-input.mp4"
 }
 
 Status: 200 OK
@@ -348,7 +348,7 @@ Processing finished successfully.
 Copy the processed video back to the host:
 
 ```bash
-docker cp <container_name>:/app/processed-nc-intro.mov ./
+docker cp <container_name>:/app/processed-input.mp4 ./
 ```
 
 ### Cleanup
@@ -596,6 +596,7 @@ Create a new project in the Google Cloud Console and note the project ID (e.g., 
 ### Install & Configure gcloud CLI
 
 ```bash
+brew install --cask gcloud-cli           # Install on macos
 gcloud -v                                # Verify installation
 gcloud components update                 # Update all components to latest
 gcloud auth login                        # Authenticate
@@ -635,6 +636,9 @@ Or create through the UI:
 ```bash
 # Build the image tagged for Artifact Registry
 docker build -t us-central1-docker.pkg.dev/<PROJECT_ID>/video-processing-repo/video-processing-service .
+# for macos
+docker build --platform linux/amd64 -t us-central1-docker.pkg.dev/eng-hub-np/video-processing-repo/video-processing-service .
+
 
 # Authenticate Docker with Artifact Registry
 gcloud auth configure-docker us-central1-docker.pkg.dev
@@ -663,6 +667,7 @@ From the Cloud Console:
 3. Choose "Deploy from an existing container image" and select the pushed image
 4. Ingress control: **Internal**
 5. Authentication: **Allow unauthenticated invocations**
+6. Network: Container Port: 3000
 
 After deployment, you get a service URL (e.g., `https://video-processing-service-v6j6pvk7fq-uc.a.run.app`).
 
@@ -708,6 +713,27 @@ gsutil mb -l us-central1 gs://codeyalaya-yt-processed-videos
 mkdir youtube-webclient
 cd youtube-webclient
 npx -y create-next-app@latest ./
+# say no to cache components, since experimental
+```
+
+Change css rules to support module css. Update next.config.ts.
+
+```ts
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+  turbopack: {
+    rules: {
+      "**/*!(*.module).css": {
+        loaders: ["@tailwindcss/turbopack"],
+        as: "*.css",
+      },
+    },
+  },
+};
+
+export default nextConfig;
 ```
 
 ### Create `src/ui/navbar/navbar.tsx`
@@ -791,6 +817,8 @@ export default function RootLayout({
 
 ## Firebase Authentication
 
+Go to Firebase console, click "Create Firebase Project", then click use existing project form google cloud.
+
 ### Install Firebase SDK
 
 ```bash
@@ -815,7 +843,7 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 ```
 
-Get the config values from the Firebase Console by going to Project Settings, then General, then Your apps, and selecting Web app. These values are safe to expose in client-side code; Firebase Security Rules protect your data.
+Get the config values from the Firebase Console by going to Project Settings, then General, then Your apps, and selecting Web app. These values are safe to expose in client-side code; Firebase Security Rules protect your data. Dont forget to add export.
 
 ### Create `src/app/firebase/auth.ts`
 
@@ -944,7 +972,7 @@ export default function Navbar() {
 
     // Cleanup subscription on unmount
     return () => unsubscribe();
-  });
+  }, []);
 
   return (
     <nav className={styles.nav}>
@@ -982,11 +1010,23 @@ cd youtube-api-functions
 firebase init functions
 ```
 
-Select TypeScript when prompted. Then install dependencies:
+Select TypeScript when prompted.
+
+### Update package.json
+
+To support 1st gen functions we need to make node version 22. Replace 24 by 22.
+
+```json
+"engines": {
+  "node": "22"
+},
+```
+
+Then install dependencies:
 
 ```bash
 cd functions
-npm install firebase-functions@latest firebase-admin@latest
+npm install
 ```
 
 ### Create Firestore Database
@@ -1055,7 +1095,7 @@ export const createUser = functions.auth.user().onCreate(async (user) => {
 });
 ```
 
-`functions.auth.user().onCreate` triggers automatically when a new user signs up via Firebase Authentication. It writes the user's `uid`, `email`, and `photoURL` to a Firestore `users` collection. `initializeApp()` initializes the Firebase Admin SDK with default credentials (automatic on Google Cloud).
+`functions.auth.user().onCreate` triggers automatically when a new user signs up via Firebase Authentication. It writes the user's `uid`, `email`, and `photoURL` to a Firestore `users` collection. `initializeApp()` initializes the Firebase Admin SDK with default credentials (automatic on Google Cloud). Run `npm run lint -- --fix` to fix linting errors.
 
 ### Deploy
 
@@ -1119,6 +1159,28 @@ firebase deploy --only functions:generateUploadUrl
 
 Verify in Google Cloud Console by going to Cloud Functions and confirming `generateUploadUrl` appears (2nd gen). Note the service account (e.g., `437029731285-compute@developer.gserviceaccount.com`).
 
+### Add `getVideos` to Cloud Functions
+
+Add this to `functions/src/index.ts`:
+
+```typescript
+export const getVideos = onCall({ maxInstances: 1 }, async () => {
+  const snapshot = await firestore
+    .collection(videoCollectionId)
+    .limit(10)
+    .get();
+  return snapshot.docs.map((doc) => doc.data());
+});
+```
+
+Deploy:
+
+```bash
+firebase deploy --only functions:getVideos
+```
+
+Make getVideos and generateUploadUrl Public access without authentication.
+
 ### Grant Permissions
 
 The Cloud Function's service account needs permission to create signed URLs:
@@ -1128,19 +1190,19 @@ The Cloud Function's service account needs permission to create signed URLs:
    - Select the `codeyalaya-yt-raw-videos` bucket.
    - Click the Permissions tab.
    - Click Grant Access.
-   - Add the service account principal (437029731285-compute@developer.gserviceaccount.com).
+   - Add the service account principal (437990835446-compute@developer.gserviceaccount.com). To get service account, go to google console then service accounts.
    - Set the role to **Cloud Storage > Storage Object Admin**.
 
 2. **Service Account Token Creator role**:
    - Open IAM & Admin in the Google Cloud Console.
    - Find the compute service account in the list.
    - Click Edit (pencil icon).
-   - Add the role **Service Account Token Creator**.
+   - Add the role **Service Accounts > Service Account Token Creator**.
 
 3. **Verify from CLI**
 
 ```bash
-gcloud describe functions generateUploadUrl --region=us-central1
+gcloud functions describe generateUploadUrl --region=us-central1
 ...
 Service Account: 437029731285-compute@developer.gserviceaccount.com
 ```
@@ -1319,11 +1381,12 @@ npm install firebase-admin
 ### Create `src/firestore.ts` in the Video Processing Service
 
 ```typescript
-import { credential } from "firebase-admin";
-import { initializeApp } from "firebase-admin/app";
+import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
-initializeApp({ credential: credential.applicationDefault() });
+initializeApp({
+  credential: applicationDefault(),
+});
 
 const firestore = getFirestore("codeyalaya");
 
@@ -1463,7 +1526,7 @@ app.listen(port, () => {
 ### Rebuild & Redeploy the Video Processing Service
 
 ```bash
-docker build -t us-central1-docker.pkg.dev/<PROJECT_ID>/video-processing-repo/video-processing-service .
+docker build --platform=linux/amd64 -t us-central1-docker.pkg.dev/<PROJECT_ID>/video-processing-repo/video-processing-service .
 
 docker push us-central1-docker.pkg.dev/<PROJECT_ID>/video-processing-repo/video-processing-service
 ```
@@ -1488,48 +1551,6 @@ gcloud run deploy video-processing-service \
 ---
 
 ## Video Listing & Playback
-
-### Add `getVideos` to Cloud Functions
-
-Add this to `functions/src/index.ts`:
-
-```typescript
-export const getVideos = onCall({ maxInstances: 1 }, async () => {
-  const snapshot = await firestore
-    .collection(videoCollectionId)
-    .limit(10)
-    .get();
-  return snapshot.docs.map((doc) => doc.data());
-});
-```
-
-Deploy:
-
-```bash
-firebase deploy --only functions:getVideos
-```
-
-Verify by sending a POST request:
-
-```text
-POST https://getvideos-v6j6pvk7fq-uc.a.run.app
-
-{
-  "data": {}
-}
-
-Status: 200 OK
-{
-  "result": [
-    {
-      "uid": "82556WyT0mV4xkMtHOvaA97WwrV2",
-      "id": "82556WyT0mV4xkMtHOvaA97WwrV2-1689378642819",
-      "filename": "processed-82556WyT0mV4xkMtHOvaA97WwrV2-1689378642819.mp4",
-      "status": "processed"
-    }
-  ]
-}
-```
 
 ### Update `src/app/page.tsx`: Video Listing
 
@@ -1625,14 +1646,17 @@ export default function Watch() {
 ### Create `.dockerignore`
 
 ```text
-node_modules
+node_modules/
+.next/
+npm-debug.log
+.env
 ```
 
 ### Create `Dockerfile`
 
 ```dockerfile
 # Stage 1: Build stage
-FROM node:18 AS builder
+FROM node:22 AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -1650,7 +1674,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Production stage
-FROM node:18
+FROM node:22
 
 # Set the working directory
 WORKDIR /app
@@ -1701,6 +1725,9 @@ docker build -t us-central1-docker.pkg.dev/<PROJECT_ID>/yt-web-client-repo/yt-we
 
 # Push to Artifact Registry
 docker push us-central1-docker.pkg.dev/<PROJECT_ID>/yt-web-client-repo/yt-web-client
+
+# for macos for above two steps, due to qemu error
+gcloud builds submit --tag us-central1-docker.pkg.dev/<PROJECT_ID>/yt-web-client-repo/yt-web-client
 
 # Deploy to Cloud Run
 gcloud run deploy yt-web-client \
