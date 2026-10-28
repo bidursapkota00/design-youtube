@@ -2668,6 +2668,7 @@ export async function uploadHlsOutput(
 Update the video prefix in the watch page and anywhere else that references the processed videos bucket. Replace the raw Cloud Storage URL with your CDN domain:
 
 ```tsx
+// In watch page:
 // Before (direct Cloud Storage)
 const videoPrefix =
   "https://storage.googleapis.com/codeyalaya-yt-processed-videos/";
@@ -2692,6 +2693,9 @@ The processed videos bucket already has CORS configured from the HLS section. If
       "https://cdn.yourdomain.com",
       "https://yt-web-client-v6j6pvk7fq-uc.a.run.app"
     ],
+    // For no custom domain
+    // "origin": ["*"],
+    // "origin": ["http://localhost:3000", "https://yt-web-client-v6j6pvk7fq-uc.a.run.app"],
     "responseHeader": ["Content-Type", "Content-Length", "Range"],
     "method": ["GET", "HEAD"],
     "maxAgeSeconds": 86400
