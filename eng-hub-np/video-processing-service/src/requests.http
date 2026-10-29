@@ -1,0 +1,7 @@
+POST http://localhost:3000/process-video
+Content-Type: application/json
+
+{
+  "inputFilePath": "./input.mp4",
+  "outputFilePath": "./output.mp4"
+}
