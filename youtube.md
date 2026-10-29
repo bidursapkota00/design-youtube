@@ -4086,19 +4086,6 @@ Frontend loads the HLS player with signed URLs.
 
 This section builds on the same GCP infrastructure to create a Udemy-like platform where users **purchase individual courses** rather than subscribing to the entire library. Each course has its own price, and a user gains lifetime access to a course after a one-time payment through **Khalti**. Instructors upload course content, and the platform takes a revenue split.
 
-### Architecture Differences: Netflix vs Udemy
-
-| Aspect                   | Netflix (Subscription)          | Udemy (Per-Course Purchase)                    |
-| ------------------------ | ------------------------------- | ---------------------------------------------- |
-| **Access model**         | All content for one monthly fee | Individual course purchase (lifetime access)   |
-| **Payment frequency**    | Recurring monthly               | One-time per course                            |
-| **Content organization** | Flat video library              | Courses > Sections > Lessons (videos)          |
-| **Content creators**     | Platform only (admin)           | Any approved instructor can upload             |
-| **Revenue model**        | Subscription revenue            | Per-sale revenue split (platform + instructor) |
-| **Progress tracking**    | Optional (continue watching)    | Essential (completion %, certificates)         |
-| **Pricing**              | Fixed tiers                     | Instructor sets price per course               |
-| **Video access**         | All videos if subscribed        | Only videos in purchased courses               |
-
 The video processing pipeline remains the same. The differences are in **content structure**, **who uploads**, **payment per item**, and **access control per course**.
 
 ### Firestore Schema
@@ -4214,7 +4201,8 @@ instructorEarnings/{instructorId}
 ### Course & Enrollment Types
 
 ```typescript
-// src/types/course.ts
+// functions/src/types/course.ts
+// webclient/types/course.ts
 
 export interface Lesson {
   id: string;
